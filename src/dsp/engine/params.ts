@@ -202,4 +202,10 @@ export interface Score {
   flutter?: number;
   /** time constant (s) of the F0 smoothing while the score plays, when its contour is already smooth */
   f0Tau?: number;
+  /**
+   * slow motion: the score was stretched this many times, and the
+   * articulators and the glottis move as many times slower while it plays,
+   * so that a gesture can be watched (1 or absent = real time)
+   */
+  timeScale?: number;
 }

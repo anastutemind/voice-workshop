@@ -454,3 +454,94 @@ input[type='range'] { accent-color: var(--amber); width: 100%; }
   .slider { grid-template-columns: 1fr 1.2fr auto; }
   .view-frame.max { inset: 8px; }
 }
+
+/* ------------------------------------------------------------ Tutor: the letters */
+.tutor { flex: 1; display: grid; gap: 12px; padding: 12px 16px 4px; grid-template-rows: auto minmax(420px, 1fr) auto; }
+.tutor-langs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.tutor-lang { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 8px 16px; border: 1px solid var(--line2); background: #121925; border-radius: 14px; color: var(--text); cursor: pointer; text-align: left; transition: border-color 0.12s, background 0.12s; }
+.tutor-lang:hover { border-color: #43516b; }
+.tutor-lang.on { border-color: var(--amber); background: rgba(246, 168, 35, 0.1); }
+.tutor-lang-native { font-size: 26px; color: var(--amber); flex: none; min-width: 64px; text-align: center; line-height: 1.6; }
+.tutor-lang-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.tutor-lang-text b { font-size: 16px; }
+.tutor-lang-text small { color: var(--muted); font-size: 12px; }
+.tutor-stage { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(280px, 0.8fr); gap: 12px; min-height: 0; }
+.tutor-head { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.tutor-head .head-view { flex: 1; }
+.tutor-mouth { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.mouth-canvas { flex: 1; min-height: 0; width: 100%; }
+.tutor-motion { padding: 8px 14px 10px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); }
+.tutor-motion .quick-label { min-width: 120px; }
+.tutor-motion .seg button small { color: inherit; opacity: 0.7; margin-left: 3px; }
+.tutor-motion .chips { margin: 0; }
+.scrub { flex: 1; min-width: 120px; accent-color: var(--amber); }
+.tutor-motion .timeline { margin: 0; }
+.tutor-letters { min-width: 0; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+.place-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); padding: 0 2px 8px; }
+.place-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.letter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 6px; }
+.letter-btn { position: relative; height: 62px; padding: 0 4px 10px; border-radius: 12px; border: 1px solid var(--line2); border-bottom: 3px solid var(--place); background: #151c28; color: var(--text); font-size: 28px; line-height: 1.3; cursor: pointer; transition: border-color 0.12s, background 0.12s, transform 0.12s; }
+.letter-btn:hover { border-color: var(--place); transform: translateY(-1px); }
+.letter-btn.on { background: var(--place); color: #0b0e14; border-color: var(--place); font-weight: 600; }
+.letter-btn small { position: absolute; left: 0; right: 0; bottom: 2px; font-size: 9.5px; line-height: 1; color: var(--muted); font-family: system-ui, sans-serif; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 3px; }
+.letter-btn.on small { color: rgba(11, 14, 20, 0.7); }
+.script-ar { font-family: 'Noto Naskh Arabic', 'Geeza Pro', 'Al Bayan', 'Baghdad', 'Arial', sans-serif; }
+.script-ur { font-family: 'Noto Nastaliq Urdu', 'Jameel Noori Nastaleeq', 'Geeza Pro', 'Al Bayan', 'Arial', sans-serif; line-height: 1.9; }
+.script-hi { font-family: 'Noto Sans Devanagari', 'Devanagari Sangam MN', 'Kohinoor Devanagari', 'Mangal', sans-serif; }
+.letter-grid.script-ur .letter-btn { font-size: 24px; line-height: 1.5; }
+.tutor-card { padding: 14px 20px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: 'glyph info try' 'glyph voices try'; gap: 12px 24px; align-items: start; background: linear-gradient(170deg, #142030, #10141d 70%); border-color: #2b3f55; }
+.letter-big { grid-area: glyph; font-size: 104px; line-height: 1.1; min-width: 140px; text-align: center; align-self: center; text-shadow: 0 6px 30px rgba(0, 0, 0, 0.5); }
+.letter-big.script-ur { line-height: 1.5; font-size: 92px; }
+.letter-info { grid-area: info; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.letter-head { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; }
+.letter-head h2 { margin: 0; font-size: 22px; font-weight: 650; }
+.letter-head .ipa, .tutor-word .ipa, .tutor-try .ipa { font-family: 'Noto Sans', 'Segoe UI', 'Lucida Sans Unicode', sans-serif; }
+.letter-head .ipa { color: var(--amber); }
+.place-badge { border: 1px solid; border-radius: 999px; padding: 3px 11px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.like { font-size: 13.5px; }
+.letter-note { margin: 0; font-size: 14px; color: #c9d2df; border-left: 2px solid var(--line2); padding-left: 10px; }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
+.step { display: flex; gap: 10px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 14px; line-height: 1.45; }
+.step.voiced { border-color: rgba(246, 168, 35, 0.4); }
+.step .ico { font-size: 22px; flex: none; line-height: 1.2; }
+.step b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); margin-bottom: 2px; }
+.trick { margin: 0; border-left: 2px solid var(--amber); padding-left: 10px; font-size: 14px; color: #e8edf5; }
+.tutor-word { display: flex; align-items: baseline; gap: 6px 14px; flex-wrap: wrap; font-size: 15px; }
+.tutor-word .w { font-size: 36px; line-height: 1.3; color: #e8edf5; }
+.tutor-word .w.script-ur { line-height: 1.6; }
+.tutor-word .roman { font-size: 17px; font-style: italic; color: #d3d9e4; }
+.tutor-try { grid-area: try; display: flex; flex-direction: column; gap: 8px; min-width: 250px; }
+.tutor-try .btn.try { padding: 10px 16px; font-size: 15px; text-align: left; }
+.tutor-try .btn.try.primary { background: var(--teal); border-color: var(--teal); color: #04221d; font-weight: 650; }
+.tutor-try .btn.try .ipa, .tutor-try .btn.try [class^='script-'] { opacity: 0.85; margin-left: 4px; }
+.speed-note { margin: 0; text-align: center; }
+.tutor-nav { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.tutor-voices { grid-area: voices; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.tutor-voices .voice-tiles { width: min(360px, 100%); }
+.tutor-voices .voice-tile { padding: 3px 3px 5px; font-size: 11.5px; }
+.tutor-voices .voice-tile img { aspect-ratio: 3 / 2; object-position: 50% 35%; }
+.text-input[dir='auto'] { unicode-bidi: plaintext; }
+
+@media (min-width: 1101px) and (min-height: 640px) {
+  .tutor { flex: 1 1 0; min-height: 0; padding-bottom: 0; grid-template-rows: auto minmax(0, 1fr) auto; }
+  .tutor-card { max-height: 46vh; overflow-y: auto; }
+}
+@media (max-width: 1100px) {
+  .tutor { grid-template-rows: auto auto auto; min-height: 0; }
+  .tutor-stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: 440px auto; }
+  .tutor-letters { grid-column: 1 / -1; max-height: 340px; }
+  .tutor-card { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: 'glyph info' 'try try' 'voices voices'; }
+}
+@media (max-width: 760px) {
+  .tutor { padding: 8px; }
+  .tutor-langs { gap: 6px; }
+  .tutor-lang { flex-direction: column; gap: 2px; padding: 8px 4px; text-align: center; }
+  .tutor-lang-text small { display: none; }
+  .tutor-lang-native { min-width: 0; font-size: 22px; }
+  .tutor-stage { grid-template-columns: minmax(0, 1fr); grid-template-rows: 380px 320px auto; }
+  .tutor-letters { max-height: 300px; }
+  .tutor-card { padding: 12px 14px; grid-template-columns: minmax(0, 1fr); grid-template-areas: 'glyph' 'info' 'try' 'voices'; }
+  .letter-big { font-size: 80px; min-width: 0; }
+  .tutor-try { min-width: 0; }
+  .letter-grid { grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); }
+}

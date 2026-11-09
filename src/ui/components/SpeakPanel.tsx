@@ -5,12 +5,12 @@ import { useLanes } from '../voice/hooks';
 import { useL } from '../i18n';
 import { Slider, Section, Seg, Toggle } from './controls';
 import { C } from '../canvas';
-import { textToPhones, Phone } from '../../dsp/speech/g2p';
+import { textToPhones, Phone, Lang } from '../../dsp/speech/g2p';
 import { buildScore, NaturalnessOptions, NATURAL_ALL } from '../../dsp/speech/sequencer';
 
 type Bi = { it: string; en: string };
 
-const EXAMPLES: { text: string; lang: 'it' | 'en' }[] = [
+const EXAMPLES: { text: string; lang: Lang }[] = [
   { text: 'heed', lang: 'en' }, { text: 'father', lang: 'en' }, { text: 'hiss', lang: 'en' }, { text: 'this', lang: 'en' },
   { text: 'a buzz, a hiss and a filter', lang: 'en' },
   { text: 'Every voice you have ever heard is made of just two ingredients.', lang: 'en' },
@@ -18,6 +18,9 @@ const EXAMPLES: { text: string; lang: 'it' | 'en' }[] = [
   { text: 'The little button on the water bottle', lang: 'en' },
   { text: 'sasso', lang: 'it' }, { text: 'mamma', lang: 'it' }, { text: 'voce', lang: 'it' }, { text: 'la voce è fatta di aria', lang: 'it' },
   { text: 'ciao, come stai?', lang: 'it' }, { text: 'il carro corre sulla strada', lang: 'it' }, { text: 'gnocchi e pizza', lang: 'it' },
+  { text: 'قَمَر', lang: 'ar' }, { text: 'السَّلامُ عَلَيْكُم', lang: 'ar' }, { text: 'الشَّمْسُ تُشْرِقُ في الصَّباح', lang: 'ar' },
+  { text: 'پانی', lang: 'ur' }, { text: 'آپ کیسے ہیں؟', lang: 'ur' }, { text: 'چاند رات میں چمکتا ہے', lang: 'ur' },
+  { text: 'कमल', lang: 'hi' }, { text: 'आप कैसे हैं?', lang: 'hi' }, { text: 'हाथी बहुत बड़ा है', lang: 'hi' },
 ];
 
 /** The ingredients of natural speech, each with a plain explanation. */
@@ -97,12 +100,12 @@ export function SpeakPanel() {
     <div className="panel-body">
       <Section title={L({ it: 'Fai parlare la testa', en: 'Make the head speak' })} accent={C.amber}
         info={L({
-          it: 'Il testo diventa fonemi. In italiano con le regole dell’ortografia (la «s» tra vocali è sonora, come al Nord); in inglese con un dizionario americano di 89 mila parole, regole per plurali, passati e parole composte, e regole di lettura per le parole che non conosce. I numeri vengono letti. Ogni fonema è un bersaglio per lingua, labbra, mascella, velo e glottide; il resto lo fa la fisica: la stessa testa che muovi a mano. Scrivi /IPA/ tra barre per dare i fonemi direttamente.',
-          en: 'The text becomes phonemes. Italian uses its spelling rules (an “s” between vowels is voiced, as in the North); English uses an American dictionary of 89 thousand words, rules for plurals, past tenses and compounds, and letter-to-sound rules for words it does not know. Numbers are read out. Each phoneme is a target for tongue, lips, jaw, velum and glottis; everything else is physics: the same head you move by hand. Write /IPA/ between slashes to give phonemes directly.',
+          it: 'Il testo diventa fonemi. In italiano con le regole dell’ortografia (la «s» tra vocali è sonora, come al Nord); in inglese con un dizionario americano di 89 mila parole, regole per plurali, passati e parole composte, e regole di lettura per le parole che non conosce. I numeri vengono letti. Arabo, urdu e hindi si leggono dalla loro scrittura (con i segni delle vocali, se ci sono). Ogni fonema è un bersaglio per lingua, labbra, mascella, velo e glottide; il resto lo fa la fisica: la stessa testa che muovi a mano. Scrivi /IPA/ tra barre per dare i fonemi direttamente.',
+          en: 'The text becomes phonemes. Italian uses its spelling rules (an “s” between vowels is voiced, as in the North); English uses an American dictionary of 89 thousand words, rules for plurals, past tenses and compounds, and letter-to-sound rules for words it does not know. Numbers are read out. Arabic, Urdu and Hindi are read from their script (with the vowel marks, when written). Each phoneme is a target for tongue, lips, jaw, velum and glottis; everything else is physics: the same head you move by hand. Write /IPA/ between slashes to give phonemes directly.',
         })}>
         <div className="row">
-          <input className="text-input" value={text} onChange={(e) => store.setSpeech({ text: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') void speak(); }} />
-          <Seg value={lang} options={[['en', 'EN'], ['it', 'IT']]} onChange={(v) => store.setSpeech({ lang: v })} />
+          <input className="text-input" dir="auto" value={text} onChange={(e) => store.setSpeech({ text: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') void speak(); }} />
+          <Seg value={lang} options={[['en', 'EN'], ['it', 'IT'], ['ar', 'AR'], ['ur', 'UR'], ['hi', 'HI']]} onChange={(v) => store.setSpeech({ lang: v })} />
         </div>
         <div className="ipa-line">{showIpa(phones) || '—'}</div>
         {lexNote && <p className="small muted">{L(lexNote)}</p>}

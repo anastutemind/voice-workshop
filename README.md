@@ -25,7 +25,9 @@ should, with a separate obstacle source where the jet hits the incisors.
 
 The interface is in English by default, with an Italian toggle (EN / IT). The
 last choice is remembered in the browser, and `?lang=it` or `?lang=en` in the
-address opens the page in that language.
+address opens the page in that language. The Letters mode teaches the
+alphabets of Urdu, Arabic and Hindi (`?mode=tutor&tutor=ur`, `ar` or `hi`),
+and the Speak panel reads text in those three languages too.
 
 ## Run
 
@@ -63,7 +65,7 @@ volume pushed up.
 
 ## What you can do
 
-Three modes, switchable in the header and remembered in the browser:
+Four modes, switchable in the header and remembered in the browser:
 
 - **Learn**, for someone who starts from nothing (a welcome and 11 chapters,
   the first ones following the video), one step at a time. The head and the
@@ -107,6 +109,31 @@ Three modes, switchable in the header and remembered in the browser:
   back to the block you came from. One or two views; each has its own view
   picker and an enlarge button (Esc closes it), and a view changed is
   remembered for that bench in the browser.
+- **Letters**, a pronunciation tutor for a child learning to read Urdu,
+  Arabic or Hindi, one letter at a time. Three big tabs choose the language;
+  the letters sit in a grid in their traditional order, coloured by where
+  in the mouth they are made (lips, tongue at the teeth, tongue tip, tip
+  curled back, middle and back of the tongue, throat, nose). Picking a
+  letter shapes the head as its sound, in silence, with a hint on the handle
+  that matters ("Curl the tip back"); beside the head a second view shows the
+  mouth from the front, as in a mirror: the lips opening, rounding and
+  pushing forward, the teeth, the tongue where it shows, the air that comes
+  out of the mouth or the nose, and the buzz of the voice in the throat.
+  The card under them says, in words a five-year-old can follow, what the
+  lips, the tongue, the air and the voice do, a trick to feel it, an English
+  sound it is like, and a word that starts with the letter, in the script,
+  in Latin letters and in English; buttons hold the sound (or say a stop
+  with its vowel), say it with a vowel, and say the word. A speed switch
+  plays everything at normal speed, at half or at a quarter: in slow motion
+  the gestures themselves slow down (the plan is stretched and the
+  articulators move as many times slower), so the tongue can be watched
+  getting into place; "Step by step" poses the head at any instant of the
+  letter or the word with a slider, in silence. The arrow keys turn the
+  letters. The alphabets: Urdu (the 39 letters, the 11 aspirated letters
+  written with do-chashmī he, and the three vowel marks), Arabic (the 28
+  letters, hamza, the three short vowels and shadda) and Hindi (13 vowels,
+  33 consonants and the 7 letters with a nukta). The instructions are in
+  English; the letters, their names and the words are in their language.
 
 Who drives the voice is always shown under the header. Your hands (the
 handles, the sliders, the phoneme buttons) drive it unless something else
@@ -143,7 +170,7 @@ Inspector (Lab) and tools (Learn):
 | Tract: tract & person | Filter (head, tube or none), articulators as sliders, phoneme buttons (IPA), the vowels measured by MRI (Story 2008) loaded as the tube, anatomy (size, pharynx length and width, nasal leak, nasal cycle, each nostril, pinch the nose, air in the piriform fossae), timbre presets, losses. |
 | Tract: teeth & slit | Front view and side view of the incisors with the jet; slit width, extra opening, diastema, overjet, advance, upper / lower incisor length, tongue groove; presets (open bite, gap teeth, overjet, short teeth); s / ʃ / f / θ / z shortcuts; live jet readouts (velocity, Reynolds number, share of the jet hitting the teeth). |
 | Noise | The physical sources (aspiration, constriction jet, teeth obstacle, release bursts) with trims and pulsing; your own noise: colour (white, pink, brown, blue, violet), a drawable 32-point spectrum, band limits, level, pulsing by the glottal flow, injection point (glottis, constriction, teeth, lips or anywhere along the tract) or straight to the ears (bypassing the tract). |
-| Speak | English or Italian text (numbers are read out), or IPA between slashes; rate, accent strength; examples in both languages; a phone timeline that follows the playback; "what makes it sound natural": timing, intonation, micro-variation, voice quality and coarticulation, each switchable, with a plain explanation and a one-click robot voice. |
+| Speak | English, Italian, Arabic, Urdu or Hindi text (numbers are read out in English and Italian), or IPA between slashes; rate, accent strength; examples in every language; a phone timeline that follows the playback; "what makes it sound natural": timing, intonation, micro-variation, voice quality and coarticulation, each switchable, with a plain explanation and a one-click robot voice. Arabic and Urdu are read from their script with the vowel marks when written and by rule otherwise (a short vowel between consonants, ا و ي as long vowels, the article assimilated to the sun letters, ے ں ھ as eː, a nasal vowel and aspiration); Hindi from Devanagari (inherent schwa and its deletion, matras, anusvāra, chandrabindu, nukta, virama). |
 | Melody | Draw a pitch contour (erase = unvoiced) and play it with the buzz alone or through the current vowel; contour presets (sample sentence, question, flat); a two-octave keyboard (mouse or computer keys) with vibrato. |
 | A/B experiment | Nine ready-made experiments (same filter other pitch, same pitch other filter, same vowel another body, dark vs bright, velum closed vs open, one nostril pinched, steady vs pulsed hiss, voice vs whisper, LF vs two-mass) plus your own A/B captures. Each side plays through the live engine, so the head and the views show A or B as you hear it, and the long-term spectra are taken from the samples you heard. |
 | Machine voice | Only the excitation of the speech model of the paper Teacher in the Loop, as the paper describes it: nine sines at 1..9 x F0, locked to the pitch, switched off where the melody is zero and replaced by soft noise, mixed by learned weights (here by hand). |
@@ -175,7 +202,8 @@ src/
     aero/aero.ts          slow aerodynamics, jets, Reynolds number, obstacle
     noise/noise.ts        turbulence sources and user noise shaping
     engine/engine.ts      the voice engine (one sample loop, telemetry)
-    speech/               phonemes, G2P (it/en), sequencer, target approximation
+    speech/               phonemes (with the retroflex, uvular, pharyngeal, emphatic and aspirated sounds of Hindi, Urdu and Arabic),
+                          G2P (it/en, Devanagari in indic.ts, Arabic and Urdu script in arabic.ts), sequencer (aspiration, murmur, nasal vowels, slow motion), target approximation
     analysis/             LPC formants, YIN pitch, mel filterbank
     data/vowels.ts        reference vowel formants
     data/mri.ts           vowel area functions measured by MRI (Story 2008)
@@ -183,7 +211,8 @@ src/
   audio/worklet.ts        AudioWorkletProcessor wrapping the program runner
   audio/audioEngine.ts    AudioContext, worklet node, microphone (the voice sink)
   ui/voice/               the voice controller, the only door to the sound: hands, performers, filter lanes, locks
-  ui/modes/               Learn, Play and Lab layouts, the view frame, the quick controls
+  ui/modes/               Learn, Play, Lab and Tutor layouts, the view frame, the quick controls
+  ui/tutor/               the letter tutor's alphabets (letters.ts) and how each sound is made, for a child (guide.ts)
   ui/ds/                  small design system: card, pills, icon button, value with unit
   ui/                     React 19 views, panels, store, i18n, guided tour
   ui/three/meshes.ts      pure mesh builder for the 3D view (tested in Node); three.js loads only with that view

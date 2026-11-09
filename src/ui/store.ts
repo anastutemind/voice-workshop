@@ -6,13 +6,18 @@ import { AreaFunction, sectionsFromGeometry, resampleTube } from '../dsp/tract/a
 import { formants, Formant } from '../dsp/tract/acoustics';
 import { noseOf, portArea } from '../dsp/tract/nasal';
 import { loadEnglishLexicon, englishLexiconSize } from '../dsp/speech/english';
+import type { Lang as SpeechLang } from '../dsp/speech/g2p';
 import { NaturalnessOptions, NATURAL_ALL } from '../dsp/speech/sequencer';
 import { voice } from './voice/voice';
 import type { StreamBlock } from './voice/sink';
 
 export type Lang = 'it' | 'en';
-/** learn: guided chapters; play: a few big controls; lab: everything, organised by the signal chain */
-export type Mode = 'learn' | 'play' | 'lab';
+/** learn: guided chapters; play: a few big controls; lab: everything, organised by the signal chain; tutor: the letters of Urdu, Arabic and Hindi */
+export type Mode = 'learn' | 'play' | 'lab' | 'tutor';
+/** the languages the letter tutor teaches */
+export type TutorLang = 'ur' | 'ar' | 'hi';
+/** playback speeds of the tutor: real time, half, a quarter */
+export type TutorSpeed = 1 | 0.5 | 0.25;
 export type ControlTab = 'source' | 'tract' | 'teeth' | 'noise' | 'output' | 'speak' | 'melody' | 'ab' | 'machine';
 export type ViewTab = 'spectrum' | 'spectrogram' | 'scope' | 'glottis' | 'chart' | 'tube' | 'tract3d';
 /** the lab's benches: the blocks of the signal chain, and the experiments */
@@ -53,7 +58,9 @@ export interface UiState {
   /** show numeric readouts everywhere (plain words otherwise) */
   numbers: boolean;
   /** the speak panel: text, its language, rate, accent strength and naturalness ingredients */
-  speech: { text: string; lang: Lang; rate: number; accent: number; natural: NaturalnessOptions };
+  speech: { text: string; lang: SpeechLang; rate: number; accent: number; natural: NaturalnessOptions };
+  /** the letter tutor: its language, the letter open (index in the alphabet) and the playback speed */
+  tutor: { lang: TutorLang; letter: number; speed: TutorSpeed };
   /** the American English pronunciation dictionary */
   lexicon: 'idle' | 'loading' | 'ready' | 'error';
 }
@@ -68,6 +75,7 @@ const CHAPTER_KEY = 'voice-workshop.chapter';
 const STEP_KEY = 'voice-workshop.step';
 const VIEWS_KEY = 'voice-workshop.lab-bench';
 const PLAY_KEY = 'voice-workshop.play';
+const TUTOR_KEY = 'voice-workshop.tutor';
 const VIEW_IDS: ViewTab[] = ['spectrum', 'spectrogram', 'scope', 'glottis', 'chart', 'tube', 'tract3d'];
 
 /** A value this browser remembers (a convenience: everything works without it). */
@@ -83,7 +91,7 @@ function query(key: string): string | null {
 
 /** First visit: the guided chapters; then the mode last used (`?mode=` wins). */
 function initialMode(): Mode {
-  for (const v of [query('mode'), remembered(MODE_KEY)]) if (v === 'learn' || v === 'play' || v === 'lab') return v;
+  for (const v of [query('mode'), remembered(MODE_KEY)]) if (v === 'learn' || v === 'play' || v === 'lab' || v === 'tutor') return v;
   return 'learn';
 }
 function initialChapter(): number {
@@ -114,6 +122,18 @@ function initialLabViews(): LabViews {
   } catch { /* not remembered */ }
   return v;
 }
+function initialTutor(): UiState['tutor'] {
+  const t: UiState['tutor'] = { lang: 'ur', letter: 0, speed: 0.5 };
+  try {
+    const r = JSON.parse(remembered(TUTOR_KEY) ?? 'null') as Partial<UiState['tutor']> | null;
+    if (r?.lang === 'ur' || r?.lang === 'ar' || r?.lang === 'hi') t.lang = r.lang;
+    if (Number.isInteger(r?.letter) && (r!.letter as number) >= 0) t.letter = r!.letter as number;
+    if (r?.speed === 1 || r?.speed === 0.5 || r?.speed === 0.25) t.speed = r.speed;
+  } catch { /* not remembered */ }
+  const q = query('tutor');
+  if (q === 'ur' || q === 'ar' || q === 'hi') { t.lang = q; t.letter = 0; }
+  return t;
+}
 function initialPlay(): PlayActivity {
   const v = remembered(PLAY_KEY);
   return v === 'speak' || v === 'sounds' || v === 'voices' || v === 'vowels' ? v : 'sounds';
@@ -138,6 +158,7 @@ class Store {
     field: 'pressure', envelope: true, showHarmonics: true, standing: 0, freeze: false, micOn: false, audioOn: false,
     info: null, numbers: false,
     speech: { text: '', lang: 'en', rate: 1, accent: 5, natural: { ...NATURAL_ALL } },
+    tutor: initialTutor(),
     lexicon: 'idle',
   };
   readonly ring = { out: new Float32Array(RING), flow: new Float32Array(RING), noise: new Float32Array(RING), w: 0, total: 0 };
@@ -189,6 +210,7 @@ class Store {
     if (u.step !== undefined) remember(STEP_KEY, String(u.step));
     if (u.labViews) remember(VIEWS_KEY, JSON.stringify(u.labViews));
     if (u.playActivity) remember(PLAY_KEY, u.playActivity);
+    if (u.tutor) remember(TUTOR_KEY, JSON.stringify(u.tutor));
     if (u.lang && u.lang !== this.ui.lang) {
       remember(LANG_KEY, u.lang);
       // the untouched example sentence follows the interface language
@@ -212,6 +234,7 @@ class Store {
   }
 
   setSpeech(u: Partial<UiState['speech']>): void { this.setUi({ speech: { ...this.ui.speech, ...u } }); }
+  setTutor(u: Partial<UiState['tutor']>): void { this.setUi({ tutor: { ...this.ui.tutor, ...u } }); }
 
   // --------------------------------------------------------- derived data
 

@@ -1,5 +1,5 @@
 import { Articulators, ARTICULATOR_KEYS, ARTICULATOR_RANGES, DEFAULT_ARTICULATORS } from '../tract/types';
-import { PHONEMES, Phoneme } from './phonemes';
+import { PHONEMES, Phoneme, NASAL_VELUM } from './phonemes';
 import { Phone, Lang } from './g2p';
 import { Score, ScoreFrame, ScorePhone } from '../engine/params';
 import { TamChannel, TAM_TAU } from './tam';
@@ -34,6 +34,16 @@ import { TamChannel, TAM_TAU } from './tam';
  *   needs; the others are interpolated from the surrounding vowels, so the
  *   tongue body glides from vowel to vowel through /p/ or /t/, and the lips
  *   round ahead of /u/. Without it every sound sets every articulator.
+ *
+ * Arabic, Urdu and Hindi use the inherent durations with long vowels and
+ * geminates (plainDuration), the Italian-style accents, and their own
+ * consonants: an aspirated stop (Hindi ख, Urdu کھ) is released into a puff
+ * of air, a murmured one (घ, گھ) into a breathy sigh of voice, and a
+ * nasalised vowel (ँ, ں) keeps the velum open.
+ *
+ * Slow motion (`timeScale`): every duration, lead and time constant of the
+ * plan is multiplied, and the engine moves its articulators as many times
+ * slower (Score.timeScale), so that a gesture can be followed by eye.
  */
 export interface NaturalnessOptions {
   timing: boolean;
@@ -60,15 +70,18 @@ export interface ProsodyOptions {
   contour?: { t: number; f0: number }[];
   /** articulatory lead of targets before the acoustic segment, s */
   lead: number;
+  /** slow motion: the whole utterance, gestures included, this many times slower (1 = real time) */
+  timeScale: number;
   natural: NaturalnessOptions;
 }
 
 /** Options of buildScore: any prosody option, and any subset of the naturalness ingredients. */
 export type ScoreOptions = Partial<Omit<ProsodyOptions, 'natural'>> & { natural?: Partial<NaturalnessOptions> };
 
-export const DEFAULT_PROSODY: ProsodyOptions = { f0: 120, accent: 5, rate: 1, ps: 8, lang: 'it', lead: 0.03, natural: NATURAL_ALL };
+export const DEFAULT_PROSODY: ProsodyOptions = { f0: 120, accent: 5, rate: 1, ps: 8, lang: 'it', lead: 0.03, timeScale: 1, natural: NATURAL_ALL };
 
-type Part = 'closure' | 'release' | 'aspiration';
+/** the parts of a stop: its closure, its release, the puff of air after it, or the breathy voice of a murmured one */
+type Part = 'closure' | 'release' | 'aspiration' | 'murmur';
 
 interface Seg {
   ipa: string;
@@ -298,6 +311,27 @@ function italianDuration(u: Unit, next: Unit | undefined, prev: Unit | undefined
   return d / 1000;
 }
 
+/**
+ * Durations for Arabic, Urdu and Hindi: the inherent duration of each sound,
+ * long vowels and geminates long, the short vowels short, and the end of a
+ * phrase slow.
+ */
+function plainDuration(u: Unit, next: Unit | undefined, prev: Unit | undefined): number {
+  let d = u.ph.dur;
+  if (u.vowel) {
+    if (u.p.long) d *= 1.7;
+    else if (u.p.ipa === 'ə' || u.p.ipa === 'ɪ' || u.p.ipa === 'ʊ') d *= 0.75;
+    if (u.p.stress) d *= 1.1; else if (u.p.func) d *= 0.8;
+    if (u.phraseFinal) d *= u.boundary === 'comma' ? 1.2 : 1.35;
+  } else {
+    if (u.p.long) d *= 1.85;
+    const pc = isCons(prev) && prev!.word === u.word, nc = isCons(next) && next!.word === u.word;
+    if (pc || nc) d *= 0.85;
+    if (u.phraseFinal && u.coda) d *= 1.25;
+  }
+  return d;
+}
+
 // ------------------------------------------------------------------ Fujisaki
 
 const ALPHA = 2.0; // phrase control, 1/s
@@ -313,14 +347,18 @@ interface Command { t1: number; t2: number; a: number; beta: number }
 export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
   const o: ProsodyOptions = { ...DEFAULT_PROSODY, ...opts, natural: { ...NATURAL_ALL, ...(opts.natural ?? {}) } };
   const nat = o.natural;
-  const rate = Math.max(0.3, o.rate);
+  const scale = Math.max(1, o.timeScale || 1);
+  const rate0 = Math.max(0.3, o.rate);
+  const rate = rate0 / scale;
   const en = o.lang === 'en';
+  /** time constant of an articulator, in slow motion as many times longer */
+  const tau = (k: string) => TAM_TAU[k] * scale;
   const units = analyse(phones);
 
   // durations
   for (let i = 0; i < units.length; i++) {
     const u = units[i];
-    if (nat.timing) u.dur = (en ? englishDuration : italianDuration)(u, units[i + 1], units[i - 1]);
+    if (nat.timing) u.dur = (en ? englishDuration : o.lang === 'it' ? italianDuration : plainDuration)(u, units[i + 1], units[i - 1]);
     else u.dur = u.ph.dur * (u.p.long && !u.vowel ? 1.9 : 1);
     if (u.ph.manner === 'trill') {
       // the number of contacts sets the duration of a trill (each about 38 ms)
@@ -332,7 +370,7 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
 
   // segments
   const segs: Seg[] = [];
-  let t = 0.06; // breath onset
+  let t = 0.06 * scale; // breath onset
   const label = (u: Unit) => u.p.ipa;
   for (let i = 0; i < units.length; i++) {
     const u = units[i];
@@ -351,7 +389,7 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
         const nx = units[i + 1];
         const afterS = units[i - 1]?.p.ipa === 's' && units[i - 1].word === u.word;
         if (en && !q.voiced && ph.manner === 'stop' && nx?.vowel && !u.coda && !afterS) {
-          const vot = ({ p: 0.055, t: 0.065, k: 0.075 }[ipa] ?? 0.06) * (u.stressed ? 1 : 0.55) / Math.sqrt(rate);
+          const vot = ({ p: 0.055, t: 0.065, k: 0.075 }[ipa] ?? 0.06) * (u.stressed ? 1 : 0.55) * scale / Math.sqrt(rate0);
           const asp = Math.max(0.005, vot - rel);
           segs.push({ ipa, ph: q, t0: t, t1: t + asp, unit: i, part: 'aspiration', label: label(u) });
           t += asp;
@@ -363,6 +401,16 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
         t += dur;
       }
     }
+    // the aspirated consonants of Hindi and Urdu: a voiceless one is released
+    // into a puff of air (a long voice onset time, 70-90 ms), a voiced one into
+    // a breathy sigh of voice, the murmur of bʱ dʱ gʱ (about 60 ms)
+    if (ph.aspirated) {
+      const nx = units[i + 1];
+      const d = (ph.voiced ? 0.06 : 0.075) * scale / Math.sqrt(rate0);
+      segs.push({ ipa: u.p.ipa, ph, t0: t, t1: t + d, unit: i, part: ph.voiced ? 'murmur' : 'aspiration', label: label(u) });
+      t += d;
+      if (nx?.vowel) nx.dur = Math.max(0.04, nx.dur - (ph.voiced ? 0.3 : 0.5) * d);
+    }
     // a pause inside the utterance; after the last sound the voice simply stops
     if (u.p.pause && i < units.length - 1) {
       const d = (u.p.pause === 'long' ? 0.3 : 0.16) / rate;
@@ -370,8 +418,8 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
       t += d;
     }
   }
-  const duration = t + 0.05;
-  const lead = o.lead;
+  const duration = t + 0.05 * scale;
+  const lead = o.lead * scale;
 
   // ---------------------------------------------------------- articulation
   // per-key anchor points: (interval, value) at the segments that specify the key
@@ -382,12 +430,14 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
     const m = s.ph.manner;
     if (m === 'silence' || ((m === 'glottal' || m === 'glottalStop') && nat.coarticulation)) continue;
     // at the release the closing articulator opens toward the next vowel: leave it free
-    if (s.part === 'release' || s.part === 'aspiration') continue;
+    if (s.part === 'release' || s.part === 'aspiration' || s.part === 'murmur') continue;
     const art = s.ph.art;
     const keys = m === 'vowel' || !nat.coarticulation ? ARTICULATOR_KEYS : (Object.keys(art) as (keyof Articulators)[]);
     const off = s.ph.offglide ? PHONEMES[s.ph.offglide].art : null;
     for (const k of keys) {
-      const v = art[k] ?? (nat.coarticulation ? DEFAULT_ARTICULATORS[k] : neutral[k]);
+      let v = art[k] ?? (nat.coarticulation ? DEFAULT_ARTICULATORS[k] : neutral[k]);
+      // a nasalised vowel (Hindi ँ, Urdu ں) keeps the velum open through the vowel
+      if (k === 'velum' && m === 'vowel' && units[s.unit].p.nasal) v = NASAL_VELUM;
       if (off) {
         // diphthong: hold the nucleus, then glide to the offglide target
         // (the nucleus is aimed to be reached a quarter of the way in)
@@ -413,10 +463,10 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
         // nasalized vowel is part of the word
         const prev = anchors[k][anchors[k].length - 1];
         const own = PROTECTED.has(k) && !(en && k === 'velum');
-        const core = own && prev && !prev.cons && prev.mid !== undefined ? prev.mid - CORE * TAM_TAU[k] : -Infinity;
-        const t0 = Math.max(core, s.t0 - lead - (m === 'stop' ? 0 : CONS_ONSET));
+        const core = own && prev && !prev.cons && prev.mid !== undefined ? prev.mid - CORE * tau(k) : -Infinity;
+        const t0 = Math.max(core, s.t0 - lead - (m === 'stop' ? 0 : CONS_ONSET * scale));
         if (prev && prev.t1 > t0) prev.t1 = Math.max(prev.t0, t0);
-        const release = (m === 'fricative' ? 2 : 1) * RELEASE_LEAD * (TAM_TAU[k] / TAM_TAU.tipY);
+        const release = (m === 'fricative' ? 2 : 1) * RELEASE_LEAD * scale * (TAM_TAU[k] / TAM_TAU.tipY);
         anchors[k].push({ t0: Math.max(t0, prev ? prev.t1 : -Infinity), t1: Math.max(t0 + 0.01, s.t1 - release), v, cons: true });
       } else anchors[k].push({ t0: s.t0 - lead, t1: s.t1 - lead, v, mid: 0.5 * (s.t0 + s.t1) });
     }
@@ -452,7 +502,7 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
     if (!vowels.length) continue;
     const [lo, hi] = ARTICULATOR_RANGES[k];
     for (let iter = 0; iter < 3; iter++) {
-      const tr = new TamChannel(valueAt(k, 0), TAM_TAU[k]);
+      const tr = new TamChannel(valueAt(k, 0), tau(k));
       const y: number[] = [];
       for (let i = 0; i * FRAME <= duration; i++) y.push(tr.step(valueAt(k, i * FRAME), FRAME));
       const at = (time: number) => y[Math.max(0, Math.min(y.length - 1, Math.round(time / FRAME)))];
@@ -468,7 +518,7 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
   // tongue-tip contacts of taps and trills (raised-cosine flicks up to the
   // ridge). Their height is measured from where the smoothed tip really is,
   // so the same target dynamics as the engine are run here
-  const tipTrack = new TamChannel(valueAt('tipY', 0), TAM_TAU.tipY);
+  const tipTrack = new TamChannel(valueAt('tipY', 0), tau('tipY'));
   const tipSmooth: number[] = [];
   for (let k = 0; k * FRAME <= duration + 0.05; k++) tipSmooth.push(tipTrack.step(valueAt('tipY', k * FRAME), FRAME));
   const tipNow = (time: number) => tipSmooth[Math.max(0, Math.min(tipSmooth.length - 1, Math.round(time / FRAME)))];
@@ -481,7 +531,7 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
       const c = 0.5 * (s.t0 + s.t1);
       flicks.push({ c, w: Math.max(0.04, (s.t1 - s.t0) * 1.6), a: Math.max(0, 2.2 - tipNow(c)) });
     } else if (s.ph.manner === 'trill') {
-      const period = 1 / 26;
+      const period = scale / 26;
       const n = Math.max(1, Math.round((s.t1 - s.t0) / period));
       const step = (s.t1 - s.t0) / n;
       for (let k = 0; k < n; k++) {
@@ -657,6 +707,8 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
       else abd = sg.ph.abduction;
     }
     for (const w of shortLag) if (time + 0.01 >= w.t0 && time + 0.01 < w.t1) abd = Math.max(abd, 0.5);
+    // the murmur of a voiced aspirate: the folds vibrate while air leaks between them
+    if (sg?.part === 'murmur') abd = 0.3;
     // lungs: on during the utterance, lower during pauses, off at the end
     let ps = time < duration ? o.ps : 0;
     let rd = 0;
@@ -677,18 +729,19 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
       // a pause is quiet: the lungs hold back instead of blowing through the open glottis
       if (sg?.ph.manner === 'silence' && sg.t1 - sg.t0 > 0.1 && time > sg.t0 + 0.04 && time < sg.t1 - 0.06) ps *= 0.08;
     }
+    if (sg?.part === 'murmur') rd += 0.9;
     frames.push({ t: time, art, abduction: abd, f0: f0At(time), ps, tip: tipAt(time), rd, gate });
   }
   const sp: ScorePhone[] = [];
   for (const s of segs) {
     const prev = sp[sp.length - 1];
-    if (prev && prev.ipa === s.label && (s.part === 'release' || s.part === 'aspiration' || units[s.unit].ph.manner === 'affricate') && sp.length && segs[segs.indexOf(s) - 1]?.unit === s.unit) { prev.t1 = s.t1; continue; }
+    if (prev && prev.ipa === s.label && (s.part === 'release' || s.part === 'aspiration' || s.part === 'murmur' || units[s.unit].ph.manner === 'affricate') && sp.length && segs[segs.indexOf(s) - 1]?.unit === s.unit) { prev.t1 = s.t1; continue; }
     sp.push({ ipa: s.label, t0: s.t0, t1: s.t1 });
   }
   // the melody is already a smooth curve (Fujisaki's filters, the drawn
   // contour): the engine only rounds off the 5 ms frame steps, without the
   // slower glide it gives to a slider, which would shave the accent peaks
-  return { frames, phones: sp, duration, flutter: nat.micro ? 25 : 0, f0Tau: 0.006 };
+  return { frames, phones: sp, duration, flutter: nat.micro ? 25 : 0, f0Tau: 0.006, ...(scale > 1 ? { timeScale: scale } : {}) };
 }
 
 /** A sustained vowel or a glide between targets, for the singing / A-B demos. */

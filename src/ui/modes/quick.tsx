@@ -81,7 +81,7 @@ export function SayBox(props: { examples?: boolean }) {
   return (
     <div className="say-box">
       <div className="say-row">
-        <input className="text-input" value={sp.text} aria-label={L({ it: 'Testo da dire', en: 'Text to say' })}
+        <input className="text-input" dir="auto" value={sp.text} aria-label={L({ it: 'Testo da dire', en: 'Text to say' })}
           onChange={(e) => store.setSpeech({ text: e.target.value, lang: ui.lang })} onKeyDown={(e) => { if (e.key === 'Enter') void speak(); }} />
         {speaking
           ? <button className="btn big" onClick={() => voice.stop()}>■ {L({ it: 'Ferma', en: 'Stop' })}</button>

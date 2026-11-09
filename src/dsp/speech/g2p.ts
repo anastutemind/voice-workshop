@@ -1,5 +1,7 @@
 import { PHONEMES } from './phonemes';
 import { englishWord, englishNumber } from './english';
+import { devanagariText } from './indic';
+import { arabicText } from './arabic';
 
 /** A phone of an utterance after grapheme-to-phoneme conversion. */
 export interface Phone {
@@ -26,9 +28,15 @@ export interface Phone {
   whQuestion?: boolean;
   /** English final /t/ before a consonant: held by a glottal stop, released without a puff */
   glottalized?: boolean;
+  /** nasalised vowel (Hindi ँ, Urdu ں): the velum stays open through it */
+  nasal?: boolean;
 }
 
-export type Lang = 'it' | 'en';
+/** The languages the text can be in: Italian, American English, Arabic, Urdu, Hindi. */
+export type Lang = 'it' | 'en' | 'ar' | 'ur' | 'hi';
+export const LANGS: Lang[] = ['en', 'it', 'ar', 'ur', 'hi'];
+/** the languages written right to left */
+export const RTL_LANGS: Lang[] = ['ar', 'ur'];
 
 const IT_VOWELS = 'aeiouàèéìíòóùú';
 const isV = (c: string | undefined) => !!c && IT_VOWELS.includes(c);
@@ -181,7 +189,7 @@ export function italianNumber(n: number): string {
 
 const IPA_SYMBOLS = Object.keys(PHONEMES).sort((a, b) => b.length - a.length);
 const IPA_ALIASES: Record<string, string> = {
-  'ɐ': 'ə', 'ɡ': 'g', 'ʁ': 'r', 'ç': 'ʃ', 'x': 'k', 'ɒ': 'ɔ', 'y': 'i', 'ø': 'e', 'œ': 'ɛ', 'ɨ': 'ɪ', 'ᵻ': 'ɪ', 'ᵊ': 'ə', 'ʤ': 'dʒ', 'ʧ': 'tʃ',
+  'ɐ': 'ə', 'ɡ': 'g', 'ʁ': 'r', 'ç': 'ʃ', 'χ': 'x', 'ʁ̞': 'ɣ', 'ɒ': 'ɔ', 'y': 'i', 'ø': 'e', 'œ': 'ɛ', 'ɨ': 'ɪ', 'ᵻ': 'ɪ', 'ᵊ': 'ə', 'ʤ': 'dʒ', 'ʧ': 'tʃ', 'ɭ': 'l', 'ɦ': 'h',
 };
 
 /** Parses an IPA string into phones (stress marks ˈ ˌ, length marks ː). */
@@ -200,6 +208,8 @@ export function parseIpa(s: string): Phone[] {
     if (c === 'ˌ') { stressNext = 2; i++; continue; }
     if (c === '.' || c === '/' || c === '[' || c === ']') { i++; continue; }
     if (c === 'ː' || c === ':') { if (out.length) out[out.length - 1].long = true; i++; continue; }
+    // a tilde over a vowel (combining U+0303, or ~ after it) nasalises it
+    if (c === '\u0303' || c === '~') { if (out.length) out[out.length - 1].nasal = true; i++; continue; }
     if (c === ' ') { if (out.length) out[out.length - 1].wordEnd = true; wordStart = true; i++; continue; }
     if (c === ',' || c === '|') { if (out.length) out[out.length - 1].pause = 'short'; i++; continue; }
     if (c === '‖' || c === '!' || c === ';') { if (out.length) out[out.length - 1].pause = 'long'; i++; continue; }
@@ -221,15 +231,17 @@ export function parseIpa(s: string): Phone[] {
   return out;
 }
 
-const WH_WORDS = {
+const WH_WORDS: Partial<Record<Lang, Set<string>>> = {
   en: new Set(['what', 'where', 'when', 'who', 'whom', 'whose', 'why', 'which', 'how']),
   it: new Set(['che', 'chi', 'cosa', 'come', 'dove', 'quando', 'perché', 'perche', 'quale', 'quali', 'quanto', 'quanta', 'quanti', 'quante']),
 };
 
-/** Text (Italian or English words, or /IPA/) to phones. */
+/** Text (words in one of the languages, or /IPA/) to phones. */
 export function textToPhones(text: string, lang: Lang): Phone[] {
   const t = text.trim();
   if ((t.startsWith('/') && t.endsWith('/')) || (t.startsWith('[') && t.endsWith(']'))) return parseIpa(t.slice(1, -1));
+  if (lang === 'hi') return devanagariText(t);
+  if (lang === 'ar' || lang === 'ur') return arabicText(t, lang);
   const out: Phone[] = [];
   // numbers become words first
   const spelled = t.replace(/\d+/g, (d) => ' ' + (lang === 'en' ? englishNumber(Number(d)) : italianNumber(Number(d))) + ' ');
@@ -245,7 +257,7 @@ export function textToPhones(text: string, lang: Lang): Phone[] {
         const last = out[out.length - 1];
         last.pause = 'long';
         last.question = true;
-        if (WH_WORDS[lang].has(firstWord)) last.whQuestion = true;
+        if (WH_WORDS[lang]?.has(firstWord)) last.whQuestion = true;
       }
       phraseStartIdx = out.length; firstWord = '';
       continue;

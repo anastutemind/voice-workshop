@@ -5,11 +5,12 @@ import { DriverBar } from './components/DriverBar';
 import { Learn } from './modes/Learn';
 import { Play } from './modes/Play';
 import { Lab } from './modes/Lab';
+import { Tutor } from './modes/Tutor';
 import { voice } from './voice/voice';
 import { useManual, useSoundOn, useVoice } from './voice/hooks';
 
-const MODES: [Mode, 'mLearn' | 'mPlay' | 'mLab', 'mLearnHint' | 'mPlayHint' | 'mLabHint'][] = [
-  ['learn', 'mLearn', 'mLearnHint'], ['play', 'mPlay', 'mPlayHint'], ['lab', 'mLab', 'mLabHint'],
+const MODES: [Mode, 'mLearn' | 'mPlay' | 'mLab' | 'mTutor', 'mLearnHint' | 'mPlayHint' | 'mLabHint' | 'mTutorHint'][] = [
+  ['learn', 'mLearn', 'mLearnHint'], ['play', 'mPlay', 'mPlayHint'], ['lab', 'mLab', 'mLabHint'], ['tutor', 'mTutor', 'mTutorHint'],
 ];
 
 /** The bar every mode shares: the name, the three modes, one Sound button, the volume, the language; then who drives the voice. */
@@ -71,6 +72,7 @@ export function App() {
       {ui.mode === 'learn' && <Learn />}
       {ui.mode === 'play' && <Play />}
       {ui.mode === 'lab' && <Lab />}
+      {ui.mode === 'tutor' && <Tutor />}
       <footer className="app-footer">
         <span>{L({ it: 'Modello fisico: sorgente LF o a due masse, tratto vocale a guida d’onda (Kelly-Lochbaum) con naso e seni, turbolenza da numero di Reynolds, ostacolo dei denti. Dettagli e riferimenti nel README.', en: 'Physical model: LF or two-mass source, waveguide vocal tract (Kelly-Lochbaum) with nose and sinuses, Reynolds-number turbulence, teeth obstacle. Details and references in the README.' })}</span>
       </footer>
