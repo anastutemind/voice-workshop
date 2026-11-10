@@ -174,10 +174,11 @@ export class AnatomyGL {
 
   /**
    * Draws the head for a posture, `w` by `h` pixels: the plate stretched by the scene's sheet, the air in `cut`
-   * (world polygons) taken out of it except inside `keep`. `world` maps world centimetres to the layer's pixels
-   * (no turn). Returns false while the pictures are not there.
+   * (world polygons) taken out of it except inside `keep`, and `clear` taken out whatever is kept but `hard` (the
+   * teeth). `world` maps world centimetres to the layer's pixels (no turn). Returns false while the pictures are
+   * not there.
    */
-  render(sc: HeadScene, world: Mat, w: number, h: number, plate: { img: TexImageSource; mask: TexImageSource } | null, cut: number[][], keep: number[][], fades: Fades, alpha = 1): boolean {
+  render(sc: HeadScene, world: Mat, w: number, h: number, plate: { img: TexImageSource; mask: TexImageSource } | null, cut: number[][], keep: number[][], fades: Fades, alpha = 1, clear: number[][] = [], hard: number[][] = []): boolean {
     const gl = this.gl, cv = this.cv;
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     gl.viewport(0, 0, w, h);
@@ -320,6 +321,39 @@ export class AnatomyGL {
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.clear(gl.STENCIL_BUFFER_BIT);
       // (clearing bit 1 only: the mask still guards bit 2)
+    }
+    // what is taken out whatever is kept there, but not the teeth: bit 8 marks those
+    if (clear.length) {
+      for (const p of hard) {
+        if (p.length < 6) continue;
+        gl.colorMask(false, false, false, false);
+        gl.stencilMask(0x04);
+        gl.stencilFunc(gl.ALWAYS, 0, 0xff);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.INVERT);
+        fan(p);
+        gl.stencilMask(0x08);
+        gl.stencilFunc(gl.EQUAL, 0x04, 0x0c);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.INVERT);
+        cover(p);
+        gl.stencilMask(0x04);
+        gl.clear(gl.STENCIL_BUFFER_BIT);
+      }
+    }
+    for (const p of clear) {
+      if (p.length < 6) continue;
+      gl.colorMask(false, false, false, false);
+      gl.stencilMask(0x01);
+      gl.stencilFunc(gl.ALWAYS, 0, 0xff);
+      gl.stencilOp(gl.KEEP, gl.KEEP, gl.INVERT);
+      fan(p);
+      gl.colorMask(true, true, true, true);
+      gl.stencilFunc(gl.EQUAL, 0x01, 0x09);
+      gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+      gl.blendFunc(gl.ZERO, gl.ZERO);
+      gl.uniform4f(U.fColor, 0, 0, 0, 0);
+      cover(p);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.clear(gl.STENCIL_BUFFER_BIT);
     }
     gl.stencilMask(0xff);
     gl.colorMask(true, true, true, true);
