@@ -98,7 +98,8 @@ export class Player {
   load(clip: Clip, t?: number): void {
     this.halt();
     this.clip = clip;
-    this.t = Math.max(0, Math.min(clip.traj.duration, t ?? clip.keyT));
+    // (left alone, a clip shows the mouth at rest, closed: the sound's own shape is seen when it is played or stepped to)
+    this.t = t === undefined ? -LEAD_IN : Math.max(0, Math.min(clip.traj.duration, t));
     this.emit();
   }
 
@@ -129,7 +130,7 @@ export class Player {
         this.playing = false;
         this.inhaling = false;
         this.settle = null;
-        if (r === 'done') this.t = clip.keyT;
+        if (r === 'done') this.t = -LEAD_IN;
         this.emit();
         resolve(r);
       };

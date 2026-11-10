@@ -300,7 +300,7 @@ export function Tutor() {
   const explain = async (only?: Row): Promise<boolean> => {
     const my = lesson.current;
     const c = clipFor('sound', 1);
-    if (c) player.load(c);
+    if (c) player.load(c, c.keyT);
     for (const [id, handle, text] of rows) {
       if (only && id !== only) continue;
       if (my !== lesson.current) return false;
@@ -397,7 +397,7 @@ export function Tutor() {
     if (!clip || clip.speed === s) return;
     endLesson();
     const next = clipFor(clip.what, s);
-    if (next) player.load(next, (p.t / clip.traj.duration) * next.traj.duration);
+    if (next) { if (p.t < 0) player.load(next); else player.load(next, (p.t / clip.traj.duration) * next.traj.duration); }
   };
   const seek = (t: number) => { endLesson(); player.seek(t); };
   /** Says what was typed: the head goes through it at the chosen speed, with the model's own voice, which the picture follows exactly. */

@@ -111,7 +111,7 @@ export default function Tract3DView() {
     const airCol = new Float32Array(meshes.air.positions.length);
     airGeo.setAttribute('color', new THREE.BufferAttribute(airCol, 3));
     airGeo.setIndex(new THREE.BufferAttribute(meshes.air.index, 1));
-    const airMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0, side: THREE.DoubleSide, emissive: 0x0a1a20 });
+    const airMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.36, metalness: 0, clearcoat: 0.85, clearcoatRoughness: 0.2, side: THREE.DoubleSide, emissive: 0x120406 });
     const air = new THREE.Mesh(airGeo, airMat);
     scene.add(air);
 
@@ -259,7 +259,13 @@ export default function Tract3DView() {
       const ray = meshes.air.ray;
       let prev = -1, r = 0, gc = 0, b = 0;
       for (let q = 0; q < ray.length; q++) {
-        if (ray[q] !== prev) { prev = ray[q]; [r, gc, b] = fieldRgb(fieldAt(lastGeom, prev, mode, tel)); }
+        if (ray[q] !== prev) {
+          prev = ray[q];
+          // with the sound on, the colours of the sound field; in silence, the tract as it is: wet pink mucosa,
+          // redder and darker toward the throat
+          if (tel) [r, gc, b] = fieldRgb(fieldAt(lastGeom, prev, mode, tel));
+          else { const u = prev / Math.max(1, lastGeom.lastRay); r = 168 + 62 * u; gc = 66 + 50 * u; b = 76 + 48 * u; }
+        }
         airCol[3 * q] = r / 255; airCol[3 * q + 1] = gc / 255; airCol[3 * q + 2] = b / 255;
       }
       airGeo.attributes.color.needsUpdate = true;
