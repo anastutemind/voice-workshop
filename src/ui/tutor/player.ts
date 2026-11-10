@@ -15,6 +15,7 @@ import type { Face } from './faces';
 import { hush, Utterance } from './speech';
 import { playClip, stopClip, voiceClip } from './clips';
 import { fit } from './align';
+import { Pace } from './sync';
 
 export type What = 'sound' | 'word';
 
@@ -31,7 +32,13 @@ export interface Clip {
 }
 
 /** What is heard while a clip plays: nothing, the model's voice (in step with the picture), or the teacher's voice. */
-export type Sound = { kind: 'none' } | { kind: 'model' } | { kind: 'voice'; speak: () => Utterance; /** names what is said, with which voice: its length is remembered under it */ id?: string };
+export type Sound = { kind: 'none' } | { kind: 'model' } | {
+  kind: 'voice';
+  /** the browser's own voice says it, when there is no recording (none: the model's voice does) */
+  speak?: () => Utterance;
+  /** names what is said, with which voice: its recording is looked up, and its length remembered, under it */
+  id?: string;
+};
 export type Outcome = 'done' | 'stopped';
 
 /** How long the breath in before a sound lasts, seconds: the mouth gets ready in the last part of it. */
@@ -64,9 +71,47 @@ export class Player {
   /** the breath in before a sound: the mouth is still at rest, the air goes in */
   inhaling = false;
   private cache: { clip: Clip; t: number; pin: Handle | null; air: Face['air']; pose: Pose | null; face: Face | null } | null = null;
+  /**
+   * Where the time is now, while a clip plays: read from the clock of what is heard (the audio's for a voice,
+   * the wall's in silence) every time a picture asks, never added up frame by frame. A computer that draws
+   * few frames draws each of them at the right instant; it cannot fall behind the sound.
+   */
+  private clock: (() => number) | null = null;
+  /** how far apart the frames come: a frame is drawn that much ahead of the sound, to be seen with it */
+  readonly pace = new Pace();
+  /** Runs `loop` at every frame, the time read first. */
+  private run(my: number, loop: () => void): void {
+    const frame = () => {
+      if (my !== this.token) return;
+      this.pace.frame(performance.now());
+      if (this.clock) this.t = this.clock();
+      loop();
+    };
+    this.raf = requestAnimationFrame(frame);
+  }
 
   subscribe = (fn: () => void): (() => void) => { this.listeners.add(fn); return () => this.listeners.delete(fn); };
-  private emit(): void { this.version++; for (const l of this.listeners) l(); }
+  /** counts the times the time has been told while playing: what follows the time itself (the scrubber, the words of the readout) reads this */
+  beat = 0;
+  private timeListeners = new Set<() => void>();
+  subscribeTime = (fn: () => void): (() => void) => { this.timeListeners.add(fn); return () => this.timeListeners.delete(fn); };
+  private emit(): void { this.told = performance.now(); this.version++; this.beat++; for (const l of this.listeners) l(); for (const l of this.timeListeners) l(); }
+  private told = 0;
+  /** the step that is lit, as the page last heard it */
+  private lit = -1;
+  /**
+   * Time has moved while playing. The pictures read the time themselves at every frame. The page around them is
+   * told only when something it shows has changed: the step that is lit. The few things that follow the time
+   * itself (the scrubber, the words of the readout) are told fifteen times a second, on a line of their own, so
+   * that the whole page is not worked through again for them: on a slow computer that work took as long as
+   * drawing a frame, and cost the mouth every third picture.
+   */
+  private tick(): void {
+    const i = this.stage, st = this.clip?.stages[i];
+    const lit = st && this.t <= st.t1 + 1e-6 ? i : -1 - i;
+    if (lit !== this.lit) { this.lit = lit; this.emit(); return; }
+    if (performance.now() - this.told >= 66) { this.told = performance.now(); this.beat++; for (const l of this.timeListeners) l(); }
+  }
 
   /** The step the time is in (-1 before the first). */
   get stage(): number { return this.clip ? stageAt(this.clip.stages, this.t) : -1; }
@@ -75,6 +120,8 @@ export class Player {
   face = (): Face | null => {
     const c = this.clip;
     if (!c) return null;
+    // the time is read when the picture is drawn, not when some other loop last ran
+    if (this.playing && this.clock) this.t = this.clock();
     // a person breathes in, speaks on the air going out, and stops: the air of a clip that plays follows that
     const air: Face['air'] = this.inhaling ? 'in' : this.playing ? 'out' : 'idle';
     if (this.cache?.clip !== c || this.cache.t !== this.t || this.cache.pin !== this.pin || this.cache.air !== air) {
@@ -120,6 +167,7 @@ export class Player {
     this.t = -LEAD_IN;
     this.playing = true;
     this.inhaling = true;
+    this.pace.rest();
     this.emit();
     return new Promise<Outcome>((resolve) => {
       this.settle = resolve;
@@ -127,6 +175,7 @@ export class Player {
         if (my !== this.token) return;
         this.token++;
         cancelAnimationFrame(this.raf);
+        this.clock = null;
         this.playing = false;
         this.inhaling = false;
         this.settle = null;
@@ -137,19 +186,25 @@ export class Player {
       /** after the sound: the mouth goes back to rest, then the clip is over */
       const rest = (after: Promise<unknown> = Promise.resolve()) => {
         cancelAnimationFrame(this.raf);
-        // (every phase runs on the wall clock, never on a count of frames: slow frames must not put the picture behind)
-        const from = Math.max(speech, this.t), at = performance.now();
+        // (from where the picture is: a recording may end a little before the model's own sounds do)
+        const from = Math.min(end, Math.max(0, this.t)), at = performance.now();
+        this.clock = () => Math.min(end, from + (performance.now() - at) / 1000);
         const loop = () => {
-          if (my !== this.token) return;
-          this.t = Math.min(end, from + (performance.now() - at) / 1000);
-          this.emit();
-          if (this.t >= end) void after.then(() => setTimeout(() => finish('done'), 200));
-          else this.raf = requestAnimationFrame(loop);
+          this.tick();
+          if (this.t >= end) { this.clock = null; void after.then(() => setTimeout(() => finish('done'), 200)); }
+          else this.run(my, loop);
         };
-        this.raf = requestAnimationFrame(loop);
+        this.run(my, loop);
       };
       const begin = async () => {
-        if (sound.kind === 'model') {
+        // the teacher's voice is a recording when there is one (fetched during the breath in); without one,
+        // the browser's voice if it has one for the language, and the model's own if not
+        const got = recorded ? await recorded : null;
+        // a recording made for other sounds (two letters written alike, said differently by the tutor) is not
+        // played with this clip: its times would not be this clip's, and the mouth would be out of step with it
+        const rec = got && (!got.marks || fit(clip.traj, clip.score.phones, got).marked) ? got : null;
+        if (my !== this.token) return;
+        if (sound.kind === 'model' || (sound.kind === 'voice' && !rec && !sound.speak)) {
           // the model's voice: the picture follows the time of the audio
           // (the audio is woken first, so that a stop while it wakes leaves nothing to sound later)
           const cold = !voice.running;
@@ -160,13 +215,13 @@ export class Player {
               if (my !== this.token || r !== 'done') finish(r); else rest();
             });
           });
-          const loop = () => {
-            if (my !== this.token) return;
+          // (the time of what is heard, and a frame's lead on it, as for a recording)
+          this.clock = () => {
             const p = voice.lanes.performer.kind === 'sentence' ? voice.progress() : null;
-            if (p) { this.t = Math.min(speech, p.t); this.emit(); }
-            this.raf = requestAnimationFrame(loop);
+            return p ? Math.min(speech, p.t + this.pace.lead()) : this.t;
           };
-          this.raf = requestAnimationFrame(loop);
+          const loop = () => { this.tick(); this.run(my, loop); };
+          this.run(my, loop);
           return;
         }
         if (sound.kind === 'voice') {
@@ -174,40 +229,37 @@ export class Player {
           // goes through the sound in the time the voice takes to say it
           // a recording of it, if there is one: the picture then reads the audio's own clock, and where
           // the sound starts and stops in the recording is measured, not guessed
-          const rec = recorded ? await recorded : null;
-          if (my !== this.token) return;
           const live = rec ? playClip(rec) : null;
           if (rec && live) {
-            // the movement is fitted to the recording, sound by sound: the picture is where the recording is
-            const f = fit(clip.traj, rec);
+            // the movement is fitted to the recording, sound by sound: the picture is where the recording is,
+            // drawn as far ahead of it as a frame takes to be seen
+            const f = fit(clip.traj, clip.score.phones, rec);
             const trace: number[] = [];
-            if (import.meta.env.DEV) Object.assign(window, { tutorSync: { t0: rec.t0, t1: rec.t1, dur: rec.buffer.duration, latency: live.latency(), trace, fit: f, rec, traj: clip.traj } });
+            if (import.meta.env.DEV && typeof window !== 'undefined') Object.assign(window, { tutorSync: { t0: rec.t0, t1: rec.t1, dur: rec.buffer.duration, latency: live.latency(), trace, fit: f, rec, traj: clip.traj, now: live.now, pace: this.pace } });
+            this.clock = () => Math.min(speech, f.at(live.now() + this.pace.lead()));
             const loop = () => {
-              if (my !== this.token) return;
               const now = live.now();
-              this.t = Math.min(speech, f.at(now));
-              if (import.meta.env.DEV) trace.push(now, this.t);
-              this.emit();
-              if (now >= f.end) rest(live.ended); else this.raf = requestAnimationFrame(loop);
+              if (import.meta.env.DEV) trace.push(now, this.t, performance.now());
+              this.tick();
+              if (now >= f.end) rest(live.ended); else this.run(my, loop);
             };
-            this.raf = requestAnimationFrame(loop);
+            this.run(my, loop);
             return;
           }
-          const said = sound.speak();
+          const said = sound.speak!();
           const known = sound.id ? spoken.get(sound.id) : undefined;
           let t0 = 0;
           void said.started.then(() => {
             if (my !== this.token) return;
             t0 = performance.now();
             const span = known ? Math.max(0.12, known - VOICE_LATENCY - VOICE_TRAIL) : speech;
+            const heard = () => (performance.now() - t0) / 1000 - VOICE_LATENCY;
+            this.clock = () => { const el = heard() + this.pace.lead(); return el <= 0 ? 0 : Math.min(speech, (speech * el) / span); };
             const loop = () => {
-              if (my !== this.token) return;
-              const el = (performance.now() - t0) / 1000 - VOICE_LATENCY;
-              this.t = el <= 0 ? 0 : Math.min(speech, (speech * el) / span);
-              this.emit();
-              if (el >= span) rest(said.ended); else this.raf = requestAnimationFrame(loop);
+              this.tick();
+              if (heard() >= span) rest(said.ended); else this.run(my, loop);
             };
-            this.raf = requestAnimationFrame(loop);
+            this.run(my, loop);
           });
           void said.ended.then(() => {
             // said to the end: how long it took is kept for the next time
@@ -217,25 +269,27 @@ export class Player {
         }
         // in silence: at the clip's own speed
         const at = performance.now();
+        this.clock = () => Math.min(speech, (performance.now() - at) / 1000);
         const loop = () => {
-          if (my !== this.token) return;
-          this.t = Math.min(speech, (performance.now() - at) / 1000);
-          this.emit();
-          if (this.t >= speech) rest(); else this.raf = requestAnimationFrame(loop);
+          this.tick();
+          if (this.t >= speech) rest(); else this.run(my, loop);
         };
-        this.raf = requestAnimationFrame(loop);
+        this.run(my, loop);
       };
       // the recording is fetched during the breath in, so that it is ready when the sound is due
       const recorded = sound.kind === 'voice' && sound.id ? voiceClip(sound.id) : null;
       const began = performance.now();
+      this.clock = () => Math.min(0, -LEAD_IN + (performance.now() - began) / 1000);
       const leadIn = () => {
-        if (my !== this.token) return;
-        this.t = Math.min(0, -LEAD_IN + (performance.now() - began) / 1000);
-        if (this.t >= 0) { this.inhaling = false; this.emit(); void begin(); return; }
-        this.emit();
-        this.raf = requestAnimationFrame(leadIn);
+        if (this.t >= 0) {
+          // (the mouth holds its first posture until the sound's own clock takes over)
+          this.clock = () => 0;
+          this.inhaling = false; this.emit(); void begin(); return;
+        }
+        this.tick();
+        this.run(my, leadIn);
       };
-      this.raf = requestAnimationFrame(leadIn);
+      this.run(my, leadIn);
     });
   }
 
@@ -262,6 +316,7 @@ export class Player {
     if (!this.playing) return;
     this.token++;
     cancelAnimationFrame(this.raf);
+    this.clock = null;
     this.inhaling = false;
     hush();
     stopClip();
@@ -276,9 +331,15 @@ export class Player {
 
 export const player = new Player();
 
-/** Re-renders with the player (its clip, its time, playing or not). */
+/** Re-renders with the player: its clip, playing or not, the step that is lit, a time set by hand. Not with every moment of a clip that plays (see `usePlayerTime`). */
 export function usePlayer(): Player {
   useSyncExternalStore(player.subscribe, () => player.version);
+  return player;
+}
+
+/** Re-renders with the player's time, fifteen times a second while a clip plays: for the small things that show the time itself. */
+export function usePlayerTime(): Player {
+  useSyncExternalStore(player.subscribeTime, () => player.beat);
   return player;
 }
 

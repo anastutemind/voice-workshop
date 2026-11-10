@@ -121,6 +121,10 @@ interface Unit {
 const FRAME = 0.005;
 /** how much earlier than its sound a consonant gesture starts (s) */
 const CONS_ONSET = 0.02;
+/** how many of its time constants ahead of a closure an articulator sets out, when it has its whole way to go */
+const CLOSE_AHEAD = 3;
+/** the whole way of an articulator: from an open vowel to a closure */
+const REACH: Record<string, number> = { jaw: 0.8, tipY: 1.75, tipX: 0.9, tongueY: 2.3, tongueX: 1.2, tongueRoot: 1.2, lipOpen: 0.8, velum: 0.35 };
 /** how long before its planned release a consonant lets its target go (s) */
 const RELEASE_LEAD = 0.012;
 /** articulators that keep the middle of a vowel for the vowel, and how many of
@@ -464,7 +468,16 @@ export function buildScore(phones: Phone[], opts: ScoreOptions = {}): Score {
         const prev = anchors[k][anchors[k].length - 1];
         const own = PROTECTED.has(k) && !(en && k === 'velum');
         const core = own && prev && !prev.cons && prev.mid !== undefined ? prev.mid - CORE * tau(k) : -Infinity;
-        const t0 = Math.max(core, s.t0 - lead - (m === 'stop' ? 0 : CONS_ONSET * scale));
+        // A closure is closed when its sound starts: an articulator that has far to go for it (the jaw and
+        // the tongue after an open vowel) sets out that much earlier, as a speaker's does in the last part of
+        // the vowel. Setting out only when the sound was due, a d after "a" never touched, a k closed a
+        // twentieth of a second late, and the mouth of the picture closed after the sound
+        const closes = m === 'stop' || m === 'nasal';
+        const far = closes && prev && !prev.cons ? Math.min(1, Math.abs(v - prev.v) / (REACH[k] ?? 1)) : 0;
+        const early = Math.max(m === 'stop' ? 0 : CONS_ONSET * scale, far * CLOSE_AHEAD * tau(k));
+        // (but the vowel before keeps its middle and a little more: a short one between two stops is still said open)
+        const kept = far > 0 && prev && prev.mid !== undefined ? prev.mid - lead + 0.2 * (prev.t1 + lead - prev.mid) : -Infinity;
+        const t0 = Math.max(core, Math.min(s.t0 - lead, Math.max(kept, s.t0 - lead - early)));
         if (prev && prev.t1 > t0) prev.t1 = Math.max(prev.t0, t0);
         const release = (m === 'fricative' ? 2 : 1) * RELEASE_LEAD * scale * (TAM_TAU[k] / TAM_TAU.tipY);
         anchors[k].push({ t0: Math.max(t0, prev ? prev.t1 : -Infinity), t1: Math.max(t0 + 0.01, s.t1 - release), v, cons: true });

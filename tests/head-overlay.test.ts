@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { computeGeometry, CANON_SCALE } from '../src/dsp/tract/geometry';
 import { Anatomy, Articulators, DEFAULT_ANATOMY, DEFAULT_ARTICULATORS, DEFAULT_TEETH } from '../src/dsp/tract/types';
 import { PHONEMES } from '../src/dsp/speech/phonemes';
-import { headScene, guideHead, HeadScene, FILLED_AIR } from '../src/ui/head/scene';
+import { headScene, guideHead, HeadScene, FILLED_AIR, FACE_PROFILE } from '../src/ui/head/scene';
 
 /** Even-odd point in polygon. */
 function inside(x: number, y: number, p: number[]): boolean {
@@ -78,7 +78,14 @@ describe('illustrated head', () => {
       // a stretched painting is not stretched at rest; a carried one is carried nowhere
       if (s.mesh) for (let i = 0; i < s.mesh.to.length; i++) expect(Math.abs(s.mesh.to[i] - CANON_SCALE * s.mesh.from[i])).toBeLessThan(1e-9);
       else for (let i = 0; i < s.poly.length; i++) expect(Math.abs(s.painted[i] - s.poly[i])).toBeLessThan(1e-9);
-      if (s.areaMesh) for (let i = 0; i < s.areaMesh.to.length; i++) expect(Math.abs(s.areaMesh.to[i] - CANON_SCALE * s.areaMesh.from[i])).toBeLessThan(1e-9);
+      // a lip with the face in front of it is drawn with the painting's own profile, carried by the model's lip (the
+      // painted lips are closed, the model's a little apart): it stays put only where it joins the rest of the
+      // painting, under the nose for the upper lip, at the chin and under the lip for the lower one
+      if (s.areaMesh) {
+        const joins = s.id === 'upperLip' ? [0, 1] : [FACE_PROFILE.lower[1] - 1, FACE_PROFILE.lower[1], FACE_PROFILE.lower[1] + 1, FACE_PROFILE.lower[1] + 2, FACE_PROFILE.lower[1] + 3, FACE_PROFILE.lower[1] + 4];
+        for (const k of joins) for (const i of [2 * k, 2 * k + 1]) expect(Math.abs(s.areaMesh.to[i] - CANON_SCALE * s.areaMesh.from[i])).toBeLessThan(1e-9);
+        expect(s.areaMesh.to.length).toBe(s.areaMesh.from.length);
+      }
     }
   });
 

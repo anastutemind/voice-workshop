@@ -24,6 +24,8 @@ export interface VoiceSink {
   onStream: (s: StreamBlock) => void;
   onEnded: (id: number, reason: EndReason, captured?: Float32Array) => void;
   onState: (running: boolean) => void;
+  /** the engine's own time (`Telemetry.time`) of the sound heard at this instant, where the sink can tell (null: it cannot now) */
+  heardTime?(): number | null;
   readonly micAnalyser: AnalyserNode | null;
   enableMic(): Promise<AnalyserNode>;
   disableMic(): void;

@@ -14,12 +14,11 @@ import { computeGeometry, canonToWorld, velumTip, TractGeometry } from '../../ds
 import { DEFAULT_ANATOMY, DEFAULT_TEETH } from '../../dsp/tract/types';
 import { NASAL_CENTRE, chinWeight } from '../head/outline';
 import { headScene, mul, Mat, HeadScene } from '../head/scene';
-import { Backdrop, getBackdrop, paintBackdrop, paintLinings, paintSolids, paintVestibule, paintRim, paintGlow, fadeNeck } from '../head/painter';
+import { Backdrop, getBackdrop, paintBackdrop, paintLinings, paintSolids, paintVestibule, paintRim, paintGlow, fadeNeck, roundLip } from '../head/painter';
 import type { Pose, Stage } from './motion';
 import { CLOSED_AREA, Flow, flowOf, lipsOf, LipState, readout, Readout, REST_ART, restGeom } from './readout';
 import type { Handle } from './guide';
-import { paintSkin, skinVersion } from './skin';
-import { shapeAt } from './visemes';
+import { paintSkin, skinCanvas, SkinFades, skinVersion } from './skin';
 
 /** What a picture shows: a pose, the part of the mouth to point at, and what it is doing. */
 export interface Face {
@@ -149,8 +148,11 @@ interface SideMem {
   /** the frame shown now: it glides to the zoom's */
   frame: [number, number, number, number] | null;
   /** the painted anatomy and the skin, each painted again only when the pose, the size or the frame changes */
-  layer: (Painted & { sc: HeadScene | null }) | null;
-  skin: (Painted & { mask: HTMLCanvasElement }) | null;
+  layer: (Painted & { sc: HeadScene | null; /** nothing of it is seen (the skin is fully on): it was not painted */ hidden: boolean; /** how fine it is painted: 1, or 0.5 while a clip plays on a slow computer */ fine: number }) | null;
+  /** seconds between frames, smoothed; and whether the anatomy is painted coarser for the clip that plays */
+  gap: number; coarse: boolean;
+  /** what the skin's own canvas shows */
+  skin: { pose: Pose | null; key: string } | null;
 }
 
 /** A name on a line to a point: the label in a column at the side, the line to the point. */
@@ -346,7 +348,7 @@ function paintTooth(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, id:
  * its front lies on the bottom teeth; raised, the blade keeps its thickness
  * and leaves the space under it in shadow.
  */
-function paintTongue(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, geom: TractGeometry, a: Pose['art']): void {
+function paintTongue(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, geom: TractGeometry): void {
   const p = sc.sprites.find((q) => q.id === 'tongue')?.poly;
   if (!p || p.length < 12) return;
   const s = sc.s;
@@ -354,9 +356,9 @@ function paintTongue(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd
   const pt = (i: number): [number, number] => [p[2 * i], p[2 * i + 1]];
   // the model's mesh: the root's foot, 24 points over the body, 6 round the tip, 8 down the front, the deep end
   let shape: (() => void) | null = null;
-  let top = 30, under: [number, number][] = [];
+  let top = 30, under: number[][] = [];
   let reshaped: number[] | null = null;
-  if (p.length === 80 && li && floor && a.tipX > -0.3) {
+  if (p.length === 80 && li && floor) {
     const A = pt(24), T = pt(25), D = pt(39);
     let bxv = T[0] - A[0], byv = T[1] - A[1];
     if (Math.hypot(bxv, byv) < 0.4 * s) { bxv = T[0] - p[46]; byv = T[1] - p[47]; }
@@ -392,7 +394,23 @@ function paintTongue(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd
       if (inx * (geom.tongueCenter[0] - E[0]) + iny * (geom.tongueCenter[1] - E[1]) < 0) { inx = -inx; iny = -iny; }
       const bend = (0.42 * w - 0.07 * (1 - w)) * Math.min(1, fl / (1.2 * s)) * s;
       const Cq: [number, number] = [0.5 * (E[0] + F[0]) + inx * bend, 0.5 * (E[1] + F[1]) + iny * bend];
-      under = [E, Cq, F];
+      // low, it lies on the bottom teeth: its front follows their inner face down to the gum, with no gap behind them
+      // (a tongue at rest fills the mouth: the model's straight wall down to the floor is only where the air stops)
+      const Lt: [number, number] = [li[6] - 0.03 * s, li[7] - 0.02 * s], Lm: [number, number] = [li[2] - 0.02 * s, li[3]];
+      const near = clamp01(1 - (Math.hypot(E[0] - Lt[0], E[1] - Lt[1]) - 0.3 * s) / (1.3 * s));
+      const hug = (1 - w) * near;
+      const mixP = (a: number[], b: number[], u: number): [number, number] => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
+      // raised (l, t, d, the tip on the ridge behind the top teeth): the blade is a blade, as thick at its root as at
+      // its tip. Its underside runs back under it before it turns down to the floor of the mouth behind the bottom
+      // teeth, and the space under it is open
+      const under0 = Math.min(1.9 * s, 0.75 * fl);
+      const R1: [number, number] = [E[0] - b[0] * under0, E[1] - b[1] * under0], R2: [number, number] = [F[0] - 1.0 * s, F[1] + 0.35 * s];
+      const C1 = mixP(mixP(mixP(E, Cq, 2 / 3), mixP(E, Lt, 0.9), hug), R1, w), C2 = mixP(mixP(mixP(F, Cq, 2 / 3), Lm, hug), R2, w);
+      const cubic = (u: number): [number, number] => {
+        const v = 1 - u;
+        return [v * v * v * E[0] + 3 * v * v * u * C1[0] + 3 * v * u * u * C2[0] + u * u * u * F[0], v * v * v * E[1] + 3 * v * v * u * C1[1] + 3 * v * u * u * C2[1] + u * u * u * F[1]];
+      };
+      under = [E, C1, C2, F];
       top = 24;
       shape = () => {
         lc.beginPath();
@@ -400,7 +418,7 @@ function paintTongue(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd
         for (let i = 1; i <= 24; i++) lc.lineTo(p[2 * i], p[2 * i + 1]);
         lc.lineTo(T1[0], T1[1]);
         for (const q of cap) lc.lineTo(q[0], q[1]);
-        lc.quadraticCurveTo(Cq[0], Cq[1], F[0], F[1]);
+        lc.bezierCurveTo(C1[0], C1[1], C2[0], C2[1], F[0], F[1]);
         lc.lineTo(floor[0], floor[1]);
         lc.lineTo(p[76], p[77]);
         lc.lineTo(D[0], D[1]);
@@ -408,7 +426,7 @@ function paintTongue(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd
       // the same outline as the model's net of points (as many round the tip and down the edge as it has), so
       // that the painting of the tongue is carried onto the whole new shape, not onto the model's and a plain patch
       const edge: [number, number][] = [T1, ...cap];
-      for (let i = 1; i <= 10; i++) { const u = i / 10, v = 1 - u; edge.push([v * v * E[0] + 2 * v * u * Cq[0] + u * u * F[0], v * v * E[1] + 2 * v * u * Cq[1] + u * u * F[1]]); }
+      for (let i = 1; i <= 10; i++) edge.push(cubic(i / 10));
       edge.push([floor[0], floor[1]], [p[76], p[77]]);
       const len = [0];
       for (let i = 1; i < edge.length; i++) len.push(len[i - 1] + Math.hypot(edge[i][0] - edge[i - 1][0], edge[i][1] - edge[i - 1][1]));
@@ -429,6 +447,29 @@ function paintTongue(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd
   lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
   lc.lineJoin = 'round';
   lc.lineCap = 'round';
+  // Between the tongue's front and the bottom teeth there is air whenever the tongue does not lie on them. The
+  // acoustic grid steps straight from the tongue's tip to the teeth's edge and leaves that space to the painting
+  // (which shows there whatever the plate has at rest, turned with the jaw): it is emptied here, and the tongue,
+  // drawn next, and the tooth, drawn after it, close it as far as they really reach.
+  const ll = geom.solids.find((q) => q.id === 'lowerLip')?.pts;
+  if (li && ll && p.length === 80) {
+    // (bounded above by the air's own edge, from over the blade to the lips: nothing that is not air or these three is touched)
+    const from = pt(23);
+    let k0 = 0;
+    for (let i = 0, best = Infinity; i < sc.lower.length; i += 2) { const d = Math.hypot(sc.lower[i] - from[0], sc.lower[i + 1] - from[1]); if (d < best) { best = d; k0 = i; } }
+    lc.save();
+    lc.globalCompositeOperation = 'destination-out';
+    lc.fillStyle = '#000';
+    lc.beginPath();
+    lc.moveTo(from[0], from[1]);
+    for (let i = k0; i < sc.lower.length; i += 2) lc.lineTo(sc.lower[i], sc.lower[i + 1]);
+    for (const i of [4, 3, 2]) lc.lineTo(ll[2 * i], ll[2 * i + 1]);
+    for (const i of [5, 4, 3, 2, 1, 0]) lc.lineTo(li[2 * i], li[2 * i + 1]);
+    lc.lineTo(geom.tongueCenter[0], geom.tongueCenter[1]);
+    lc.closePath();
+    lc.fill();
+    lc.restore();
+  }
   // under a raised blade: the floor of the mouth, in shadow
   lc.save();
   clipToTissue(lc, sc);
@@ -446,12 +487,23 @@ function paintTongue(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd
   outline();
   lc.clip();
   const net = reshaped;
-  paintSolids(lc, net ? { ...sc, sprites: sc.sprites.map((sp) => (sp.id === 'tongue' && sp.mesh ? { ...sp, poly: net, mesh: { ...sp.mesh, to: net } } : sp)) } : sc, world, bd, ['tongue'], false);
+  // The painting is taken from a little inside the painted tongue round its tip and down its front: the tongue of
+  // the painting is not exactly the model's at rest, and on its very edge lie the teeth and the gum beside it.
+  const inside = (from: number[], c: [number, number]): number[] => {
+    const out = from.slice();
+    for (let i = 20; i < out.length / 2 - 1; i++) {
+      const by = (i < 25 ? 0.07 * (i - 19) : 0.42);
+      const dx = c[0] - out[2 * i], dy = c[1] - out[2 * i + 1], l = Math.hypot(dx, dy) || 1;
+      out[2 * i] += (dx / l) * Math.min(by, l * 0.5); out[2 * i + 1] += (dy / l) * Math.min(by, l * 0.5);
+    }
+    return out;
+  };
+  paintSolids(lc, { ...sc, sprites: sc.sprites.map((sp) => (sp.id === 'tongue' && sp.mesh ? { ...sp, poly: net ?? sp.poly, mesh: { ...sp.mesh, from: inside(sp.mesh.from, sp.mesh.cFrom), to: net ?? sp.mesh.to } } : sp)) }, world, bd, ['tongue'], false);
   lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
   // its underside and front: redder and in the shade of the blade
   if (under.length) {
-    const [E, Cq, F] = under;
-    const line = () => { lc.beginPath(); lc.moveTo(E[0], E[1]); lc.quadraticCurveTo(Cq[0], Cq[1], F[0], F[1]); };
+    const [E, C1, C2, F] = under;
+    const line = () => { lc.beginPath(); lc.moveTo(E[0], E[1]); lc.bezierCurveTo(C1[0], C1[1], C2[0], C2[1], F[0], F[1]); };
     for (const [wd, al] of [[1.5, 0.1], [0.9, 0.14], [0.45, 0.2]] as [number, number][]) {
       line();
       lc.strokeStyle = `rgba(150,44,58,${al})`;
@@ -475,63 +527,6 @@ function paintTongue(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd
   lc.strokeStyle = 'rgba(92,26,38,0.55)';
   lc.lineWidth = 0.03 * s;
   lc.stroke();
-  lc.restore();
-}
-
-/**
- * The red of a lip, on the painted face: along its free edge, from its front
- * round under it to where it meets the mouth, soft toward the skin. The
- * painting gives the lips the colour of the skin; a lip is known by its red.
- */
-/** Rounds the inner corner of a lip (where its free edge turns up into the mouth): a lip is not cut square. */
-function roundLip(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, id: 'upperLip' | 'lowerLip'): void {
-  const p = sc.sprites.find((q) => q.id === id)?.poly;
-  if (!p || p.length < 20) return;
-  const r = 0.3 * sc.s;
-  lc.save();
-  lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
-  lc.globalCompositeOperation = 'destination-out';
-  lc.fillStyle = '#000';
-  // the corner is point 2; its neighbours along the lip are 3 (toward the front) and 1 (up the inside)
-  for (const [k, a, b] of [[2, 3, 1], [4, 5, 3]] as [number, number, number][]) {
-    const c = [p[2 * k], p[2 * k + 1]], u = [p[2 * a] - c[0], p[2 * a + 1] - c[1]], v = [p[2 * b] - c[0], p[2 * b + 1] - c[1]];
-    const lu = Math.hypot(u[0], u[1]) || 1, lv = Math.hypot(v[0], v[1]) || 1;
-    const ru = Math.min(r, lu * 0.5), rv = Math.min(r, lv * 0.5);
-    const A = [c[0] + (u[0] / lu) * ru, c[1] + (u[1] / lu) * ru], B = [c[0] + (v[0] / lv) * rv, c[1] + (v[1] / lv) * rv];
-    lc.beginPath();
-    lc.moveTo(A[0], A[1]);
-    lc.lineTo(c[0], c[1]);
-    lc.lineTo(B[0], B[1]);
-    lc.quadraticCurveTo(c[0], c[1], A[0], A[1]);
-    lc.closePath();
-    lc.fill();
-  }
-  lc.restore();
-}
-
-function paintLipRed(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, id: 'upperLip' | 'lowerLip'): void {
-  const p = sc.sprites.find((q) => q.id === id)?.poly;
-  const face = id === 'upperLip' ? sc.upperFace : sc.lowerFace;
-  if (!p || p.length < 20 || face.length < 6) return;
-  const s = sc.s;
-  // the lip's outline: the upper one runs 6 (front) … 1 (inside), the lower one 1 (inside) … 6 (front)
-  const edge = id === 'upperLip' ? [6, 5, 4, 3, 2, 1] : [1, 2, 3, 4, 5, 6];
-  lc.save();
-  lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
-  lc.beginPath();
-  lc.moveTo(face[0], face[1]);
-  for (let i = 2; i < face.length; i += 2) lc.lineTo(face[i], face[i + 1]);
-  lc.closePath();
-  lc.clip();
-  lc.lineJoin = 'round';
-  lc.lineCap = 'round';
-  const line = () => { lc.beginPath(); edge.forEach((k, i) => { if (i === 0) lc.moveTo(p[2 * k], p[2 * k + 1]); else lc.lineTo(p[2 * k], p[2 * k + 1]); }); };
-  for (const [w, colour] of [[1.0, 'rgba(176,84,92,0.22)'], [0.7, 'rgba(182,84,94,0.4)'], [0.42, 'rgba(190,88,98,0.6)'], [0.2, 'rgba(204,104,112,0.55)']] as [number, string][]) {
-    line();
-    lc.strokeStyle = colour;
-    lc.lineWidth = w * s;
-    lc.stroke();
-  }
   lc.restore();
 }
 
@@ -559,7 +554,7 @@ function cutAir(lc: CanvasRenderingContext2D, world: Mat, polys: number[][]): vo
    * What is drawn behind the layer (the air, coloured or dark) shows through
    * the hole. Every view of the head is painted by this.
    */
-  export function paintHead(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, geom: TractGeometry, a: Pose['art']): void {
+  export function paintHead(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, geom: TractGeometry, _a?: Pose['art']): void {
   paintBackdrop(lc, sc, world, bd);
   paintLinings(lc, sc, world, bd, false);
   // the air is taken out of the painting, then everything that bounds it is painted with its own
@@ -576,19 +571,25 @@ function cutAir(lc: CanvasRenderingContext2D, world: Mat, polys: number[][]): vo
   // (the grid's last steps reach up between the top teeth and the lip: no air there, the lip lies on them)
   paintVestibule(lc, sc, world, bd);
   paintSolids(lc, sc, world, bd, ['palate']);
-  paintTongue(lc, sc, world, bd, geom, a);
+  paintTongue(lc, sc, world, bd, geom);
   paintTooth(lc, sc, world, 'lowerIncisor', bd.tone.mucosa);
   paintSolids(lc, sc, world, bd, ['lowerLip'], false);
-  paintLipRed(lc, sc, world, 'lowerLip');
   roundLip(lc, sc, world, 'lowerLip');
   paintTooth(lc, sc, world, 'upperIncisor', bd.tone.mucosa);
   paintSolids(lc, sc, world, bd, ['upperLip'], false);
-  paintLipRed(lc, sc, world, 'upperLip');
   roundLip(lc, sc, world, 'upperLip');
 }
 
-function drawSide(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, time: number, dt: number, face: Face, mem: SideMem): void {
+/**
+ * The side view, on three canvases laid over one another: the anatomy and the air (`ctx`), the skin (its own
+ * canvas, put in `skinHost` and made as clear as the layer is turned down), and over them what is written and
+ * pointed at (`over`). Each is painted only when what it shows changes.
+ */
+function drawSide(ctx: CanvasRenderingContext2D, over: CanvasRenderingContext2D, skinHost: HTMLElement | null, w: number, h: number, dpr: number, time: number, dt: number, face: Face, mem: SideMem): void {
   ctx.clearRect(0, 0, w, h);
+  over.clearRect(0, 0, w, h);
+  over.lineJoin = 'round';
+  over.lineCap = 'round';
   const a = face.pose.art;
   const shape = shapeOf(face.pose);
   const geom = shape.geom;
@@ -625,37 +626,55 @@ function drawSide(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numb
   // ---- the painted head, with everything that bounds the air drawn from the geometry
   const bd = getBackdrop();
   const cw = ctx.canvas.width, ch = ctx.canvas.height;
-  /** where the head runs past the frame the picture fades instead of being cut */
-  const fadeEdges = (lc: CanvasRenderingContext2D) => {
+  /** where the head runs past the frame the picture fades instead of being cut: where it is clear, then where it is whole (device pixels) */
+  const edges: Pick<SkinFades, 'left' | 'top' | 'bottom'> = {};
+  {
+    const left = X(X0) * dpr, top = Y(Y1) * dpr, bottom = Y(Y0) * dpr;
+    if (X0 > -9.4) edges.left = [left, left + Math.min(3.2, X0 + 9.4 + 0.4) * k * dpr];
+    if (Y1 < 24.5) edges.top = [top, top + Math.min(2.4, 24.5 - Y1 + 0.3) * k * dpr];
+    if (Y0 > -3.3) edges.bottom = [bottom, bottom - Math.min(1.2, Y0 + 3.3 + 0.2) * k * dpr];
+  }
+  const fadeEdges = (lc: CanvasRenderingContext2D, q: number) => {
     lc.setTransform(1, 0, 0, 1, 0, 0);
     lc.globalCompositeOperation = 'destination-out';
-    const fade = (x0: number, y0: number, x1: number, y1: number) => {
-      const g = lc.createLinearGradient(x0, y0, x1, y1);
+    for (const [pair, along] of [[edges.left, 'x'], [edges.top, 'y'], [edges.bottom, 'y']] as const) {
+      if (!pair) continue;
+      const g = along === 'x' ? lc.createLinearGradient(pair[0] * q, 0, pair[1] * q, 0) : lc.createLinearGradient(0, pair[0] * q, 0, pair[1] * q);
       g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
       lc.fillStyle = g;
-      lc.fillRect(0, 0, cw, ch);
-    };
-    const left = X(X0) * dpr, top = Y(Y1) * dpr, bottom = Y(Y0) * dpr;
-    if (X0 > -9.4) fade(left, 0, left + Math.min(3.2, X0 + 9.4 + 0.4) * k * dpr, 0);
-    if (Y1 < 24.5) fade(0, top, 0, top + Math.min(2.4, 24.5 - Y1 + 0.3) * k * dpr);
-    if (Y0 > -3.3) fade(0, bottom, 0, bottom - Math.min(1.2, Y0 + 3.3 + 0.2) * k * dpr);
+      lc.fillRect(0, 0, lc.canvas.width, lc.canvas.height);
+    }
     lc.globalCompositeOperation = 'source-over';
   };
   let scene: HeadScene | null = null;
   const world: Mat = mul([dpr, 0, 0, dpr, 0, 0], [k, 0, 0, -k, ox, oy]);
   if (bd) {
-    const lay = (mem.layer ??= { cv: document.createElement('canvas'), pose: null, w: 0, h: 0, frame: '', sc: null });
-    if (lay.pose !== face.pose || lay.w !== cw || lay.h !== ch || lay.frame !== frameKey || !lay.sc) {
-      if (lay.cv.width !== cw || lay.cv.height !== ch) { lay.cv.width = cw; lay.cv.height = ch; }
-      const lc = lay.cv.getContext('2d')!;
-      lc.setTransform(1, 0, 0, 1, 0, 0);
-      lc.clearRect(0, 0, cw, ch);
+    const lay = (mem.layer ??= { cv: document.createElement('canvas'), pose: null, w: 0, h: 0, frame: '', sc: null, hidden: false, fine: 1 });
+    // (under a skin that is fully on, nothing of the anatomy is seen: it is not painted)
+    const hidden = skin >= 0.999;
+    // While a clip plays on a computer that draws fewer than twenty-five frames a second, the anatomy is painted
+    // at half its fineness (a quarter of the work): more mouths are then seen in the time a sound takes, each a
+    // little softer. It is painted fine again the moment the clip stops.
+    mem.gap += (dt - mem.gap) * 0.2;
+    const live = face.air === 'in' || face.air === 'out';
+    mem.coarse = live && (mem.coarse || mem.gap > 0.04);
+    const fine = mem.coarse ? 0.5 : 1, lw = Math.round(cw * fine), lh = Math.round(ch * fine);
+    const layWorld: Mat = fine === 1 ? world : [world[0] * fine, world[1] * fine, world[2] * fine, world[3] * fine, world[4] * fine, world[5] * fine];
+    if (lay.pose !== face.pose || lay.w !== cw || lay.h !== ch || lay.frame !== frameKey || !lay.sc || lay.hidden !== hidden || lay.fine !== fine) {
+      if (lay.cv.width !== lw || lay.cv.height !== lh) { lay.cv.width = lw; lay.cv.height = lh; }
+      // (a canvas kept in the computer's own memory: the head is many small clipped pictures, which a weak
+      // graphics card paints several times slower than the processor does)
+      const lc = lay.cv.getContext('2d', { willReadFrequently: true })!;
       lay.sc = headScene(geom, AN, a);
       const sc = lay.sc;
-      paintHead(lc, sc, world, bd, geom, a);
-      fadeNeck(lc, sc, world);
-      fadeEdges(lc);
-      lay.pose = face.pose; lay.w = cw; lay.h = ch; lay.frame = frameKey;
+      if (!hidden) {
+        lc.setTransform(1, 0, 0, 1, 0, 0);
+        lc.clearRect(0, 0, lw, lh);
+        paintHead(lc, sc, layWorld, bd, geom, a);
+        fadeNeck(lc, sc, layWorld);
+        fadeEdges(lc, fine);
+      }
+      lay.pose = face.pose; lay.w = cw; lay.h = ch; lay.frame = frameKey; lay.hidden = hidden; lay.fine = fine;
     }
     const sc = lay.sc;
     scene = sc;
@@ -671,10 +690,30 @@ function drawSide(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numb
     // (not between the lips: there the mouth is open onto the room, and a darker slab would stand in front of the face)
     for (const q of [sc.lumen, sc.port]) if (q.length >= 6) { path(q); ctx.fill(); }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(lay.cv, 0, 0);
+    if (!hidden) ctx.drawImage(lay.cv, 0, 0, cw, ch);
     paintGlow(ctx, sc, world, flow.nose > 0.05 ? 0.35 + 0.65 * flow.nose : 0);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalAlpha = 1;
+    // ---- the skin for this posture, on its own canvas (painted when the posture changes)
+    if (skin > 0.01) {
+      const sk = (mem.skin ??= { pose: null, key: '' });
+      // (with the skin fully on the mouth has its own inside; half on, the anatomy is seen between the lips)
+      const inside = Math.round(20 * clamp01((skin - 0.6) / 0.4)) / 20;
+      const key = `${cw}x${ch}|${frameKey}|${skinVersion()}|${inside}`;
+      const cv = skinCanvas();
+      if (cv && (sk.pose !== face.pose || sk.key !== key || cv.width !== cw || cv.height !== ch)) {
+        const yOf = (y: number) => world[3] * y + world[5];
+        paintSkin(sc, world, cw, ch, inside, { ...edges, neck: [yOf(sc.neckEnd), yOf(sc.neckEnd + 1.6 * sc.s)] });
+        sk.pose = face.pose; sk.key = key;
+      }
+      if (skinHost && cv && cv.parentElement !== skinHost) skinHost.replaceChildren(cv);
+    }
+  }
+  if (skinHost) {
+    // (turned off, it is taken out of the page: a clear canvas still costs the browser a layer)
+    const on = !!scene && skin > 0.01, shown = on ? String(Math.round(skin * 100) / 100) : '0';
+    if (skinHost.style.opacity !== shown) skinHost.style.opacity = shown;
+    if ((skinHost.style.display === 'none') === on) skinHost.style.display = on ? '' : 'none';
   }
 
   // ---- the air, as a stream of dots: it waits behind a closure, and leaves by the mouth or the nose
@@ -783,28 +822,18 @@ function drawSide(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numb
   {
     const apart = flow.voice > 0.08 ? Math.abs(Math.sin(time * 55)) * 1.2 : 1 + 4 * clamp01(face.pose.abduction);
     ctx.fillStyle = flow.voice > 0.08 ? C.voice : 'rgba(255,255,255,0.75)';
+    // (not seen through the skin)
+    ctx.globalAlpha = clamp01(1 - (skin - 0.6) / 0.4);
     const gw = 0.42 * k;
     ctx.beginPath(); ctx.moveTo(gx - gw, gy - 2.5); ctx.lineTo(gx - apart, gy); ctx.lineTo(gx - gw, gy + 2.5); ctx.closePath(); ctx.fill();
     ctx.beginPath(); ctx.moveTo(gx + gw, gy - 2.5); ctx.lineTo(gx + apart, gy); ctx.lineTo(gx + gw, gy + 2.5); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
   // ---- the skin, over the anatomy as far as the layer is turned up
+  // ---- over the skin: what is felt through it, written on it and pointed at
+  ctx = over;
   if (scene && skin > 0.01) {
-    const sk = (mem.skin ??= { cv: document.createElement('canvas'), mask: document.createElement('canvas'), pose: null, w: 0, h: 0, frame: '' });
-    const mouth = shapeAt(face);
-    const skKey = `${frameKey}|${skinVersion()}|${mouth}`;
-    if (sk.pose !== face.pose || sk.w !== cw || sk.h !== ch || sk.frame !== skKey) {
-      if (sk.cv.width !== cw || sk.cv.height !== ch) { sk.cv.width = cw; sk.cv.height = ch; }
-      const lc = sk.cv.getContext('2d')!;
-      paintSkin(lc, sk.mask, scene, geom, { X, Y, k }, w, h, dpr, world, mouth);
-      fadeEdges(lc);
-      sk.pose = face.pose; sk.w = cw; sk.h = ch; sk.frame = skKey;
-    }
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = skin;
-    ctx.drawImage(sk.cv, 0, 0);
-    ctx.restore();
     // the voice felt through the skin of the throat
     if (flow.voice > 0.08) {
       const rg = ctx.createRadialGradient(gx + 1.2 * k, gy, 1, gx + 1.2 * k, gy, 2.0 * k);
@@ -1177,9 +1206,9 @@ function drawFront(ctx: CanvasRenderingContext2D, w: number, h: number, time: nu
     }
     // the bottom teeth, behind the lower lip up to their edge
     if (Tl < lipTop - 1) {
-      const lw = [0.5, 0.52, 0.5, 0.5, 0.52, 0.5];
-      let lx = cx - (lw.reduce((s, x) => s + x, 0) * k) / 2;
-      lw.forEach((tw, i) => {
+      const cw = [0.5, 0.52, 0.5, 0.5, 0.52, 0.5];
+      let lx = cx - (cw.reduce((s, x) => s + x, 0) * k) / 2;
+      cw.forEach((tw, i) => {
         const side = Math.abs(i - 2.5) / 2.5;
         const y = Tl + 0.1 * k * side * side;
         tooth(lx, y, tw * k, lipTop - y + 6, false, side);
@@ -1334,15 +1363,32 @@ function drawFront(ctx: CanvasRenderingContext2D, w: number, h: number, time: nu
 
 /** One of the two pictures, redrawn every frame from the face it is given. */
 export function FaceCanvas({ kind, face, label }: { kind: 'side' | 'front'; face: () => Face | null; label: string }) {
-  const side = useRef<SideMem>({ dots: [], spawn: 0, wasBlocked: false, burst: 0, frame: null, layer: null, skin: null });
+  const side = useRef<SideMem>({ dots: [], spawn: 0, wasBlocked: false, burst: 0, frame: null, layer: null, skin: null, gap: 1 / 60, coarse: false });
   const front = useRef<FrontMem>({ puffs: [] });
+  const over = useRef<HTMLCanvasElement | null>(null);
+  const skinHost = useRef<HTMLDivElement | null>(null);
   const ref = useAnimatedCanvas(({ ctx, w, h, t, dt, dpr }) => {
     const f = face();
-    if (!f) { ctx.clearRect(0, 0, w, h); return; }
-    if (kind === 'side') drawSide(ctx, w, h, dpr, t, dt, f, side.current);
-    else drawFront(ctx, w, h, t, dt, f, front.current);
+    if (kind !== 'side') {
+      if (!f) ctx.clearRect(0, 0, w, h); else drawFront(ctx, w, h, t, dt, f, front.current);
+      return;
+    }
+    // the canvas over the skin has the size of the one under it
+    const oc = over.current, top = oc?.getContext('2d');
+    if (!oc || !top) return;
+    if (oc.width !== ctx.canvas.width || oc.height !== ctx.canvas.height) { oc.width = ctx.canvas.width; oc.height = ctx.canvas.height; }
+    top.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!f) { ctx.clearRect(0, 0, w, h); top.clearRect(0, 0, w, h); return; }
+    drawSide(ctx, top, skinHost.current, w, h, dpr, t, dt, f, side.current);
   });
-  return <canvas ref={ref} className={`face-canvas face-${kind}`} role="img" aria-label={label} />;
+  if (kind !== 'side') return <canvas ref={ref} className={`face-canvas face-${kind}`} role="img" aria-label={label} />;
+  return (
+    <div className="face-stack">
+      <canvas ref={ref} className="face-canvas face-side" role="img" aria-label={label} />
+      <div ref={skinHost} className="face-skin" aria-hidden="true" />
+      <canvas ref={over} className="face-canvas face-over" aria-hidden="true" />
+    </div>
+  );
 }
 
 // handy for debugging in the browser console during development

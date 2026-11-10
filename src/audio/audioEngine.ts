@@ -1,3 +1,4 @@
+import { heardNow } from '../ui/voice/heard';
 import workletUrl from './worklet.ts?worker&url';
 import type { Telemetry } from '../dsp/engine/engine';
 import type { EngineParams } from '../dsp/engine/params';
@@ -22,6 +23,22 @@ export class AudioBridge implements VoiceSink {
   onStream: (s: StreamBlock) => void = () => {};
   onEnded: (id: number, reason: EndReason, captured?: Float32Array) => void = () => {};
   onState: (running: boolean) => void = () => {};
+
+  private ahead = new Float64Array(48).fill(Infinity);
+  private aheadAt = 0;
+  /**
+   * The engine's own time (that of its reports) of the sound that is heard at this instant, or null if it is
+   * not known. A report tells what the engine had computed when it was made; it reaches the page some time
+   * later, and later still on a busy one. This reads the audio's clock instead, where the sound leaves the
+   * computer: a picture drawn from it is with the sound whenever it is drawn.
+   */
+  heardTime(): number | null {
+    const c = this.ctx;
+    if (!c || c.state !== 'running') return null;
+    let least = Infinity;
+    for (const v of this.ahead) if (v < least) least = v;
+    return Number.isFinite(least) ? heardNow(c, performance.now()) - least : null;
+  }
 
   get running(): boolean { return !!this.ctx && this.ctx.state === 'running'; }
   get sampleRate(): number { return this.ctx?.sampleRate ?? 48000; }
@@ -63,6 +80,9 @@ export class AudioBridge implements VoiceSink {
       node.port.onmessage = (e: MessageEvent<RunnerOut>) => {
         const d = e.data;
         if (d.type === 'telemetry') {
+          // (how far the context's clock is ahead of the engine's own: the least of the last reports, which
+          // is the one that was handed over soonest)
+          this.ahead[this.aheadAt++ % this.ahead.length] = ctx.currentTime - d.telemetry.time;
           // what the engine reports is what it has just computed; it is heard later, by the time the sound
           // takes to leave the computer. The pictures are drawn from it: it is handed on when it is heard,
           // so that lips and sound are together

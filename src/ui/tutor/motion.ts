@@ -74,8 +74,14 @@ export function trajectory(score: Score): Trajectory {
   const poses: Pose[] = [];
   let idx = 0;
   const duration = score.duration + TAIL * scale;
+  // The score ends by letting the mouth go slack, open, a moment after its last sound: said by a person, a word
+  // that ends on closed lips (aam, seb) ends there, and the mouth stays shut. So the way back to rest starts
+  // where the last sound stops: lips that are closed do not open again only to close.
+  let said = 0;
+  for (const p of score.phones) if (p.ipa !== '_' && PHONEMES[p.ipa]) said = Math.max(said, p.t1);
+  const over = said > 0 ? Math.min(score.duration, said) : score.duration;
   for (let t = 0; t <= duration + dt; t += dt) {
-    if (t > score.duration) {
+    if (t > over) {
       // after the last sound: the breath stops, the mouth goes back to where it rests
       const art = {} as Articulators;
       for (const k of ARTICULATOR_KEYS) art[k] = tam[k].step(REST_ART[k], dt);
@@ -152,6 +158,36 @@ function closedSpan(tr: Trajectory, t0: number, t1: number): [number, number] | 
  * movement shows them (hold while the mouth is closed, pop when it opens,
  * puff for the air after it).
  */
+/** How far apart two values of an articulator are that make two different sounds: its distances are counted in these. */
+const SPAN: Record<string, number> = { jaw: 0.5, tongueX: 1, tongueY: 1, tongueRoot: 1, tipX: 0.8, tipY: 1, groove: 0.6, tongueSides: 0.6, lipOpen: 0.4, lipRound: 0.6, lipProtrude: 0.6, lipTuck: 0.6, velum: 0.25, larynx: 1 };
+
+/**
+ * The instant of a sound that shows it best: for a sound made with the mouth closed (m, n), the middle of the
+ * time it is closed; for any other, the moment the mouth and the voice are nearest to that sound's own. Between its
+ * neighbours a sound is itself only for a part of its time: a short vowel before a stop is already closing at
+ * its end, lips open for the next sound before an m is over.
+ */
+function ownInstant(tr: Trajectory, t0: number, t1: number, closed: boolean, own: Partial<Articulators>, glottis: number): number {
+  if (closed) {
+    const shut = closedSpan(tr, t0, t1);
+    if (shut) return (shut[0] + shut[1]) / 2;
+  }
+  const keys = Object.keys(own) as (keyof Articulators)[];
+  let best = t0 + (t1 - t0) * 0.75, least = Infinity;
+  if (!keys.length) return best;
+  for (let i = 1; i <= 9; i++) {
+    const t = t0 + ((t1 - t0) * i) / 10;
+    const pose = poseAt(tr, t);
+    if (!pose) continue;
+    // (the voice counts too: a vowel after a puffed stop starts in its breath)
+    let d = ((pose.abduction - glottis) / 0.3) ** 2;
+    for (const k of keys) d += ((pose.art[k] - own[k]!) / (SPAN[k] ?? 1)) ** 2;
+    // (of two moments as near, the later: the mouth has settled)
+    if (d < least - 1e-9 || (d < least + 0.02 && d <= least * 1.05)) { least = Math.min(least, d); best = t; }
+  }
+  return best;
+}
+
 export function stagesOf(phones: ScorePhone[], tr: Trajectory): Stage[] {
   const out: Stage[] = [];
   let run = 0;
@@ -162,7 +198,7 @@ export function stagesOf(phones: ScorePhone[], tr: Trajectory): Stage[] {
     const ph = PHONEMES[p.ipa];
     const g = guideFor(p.ipa);
     const stopLike = ph.manner === 'stop' || ph.manner === 'affricate';
-    const base = { ipa: p.ipa, t0: p.t0, t1: p.t1, handle: g.handle, key: p.t0 + (p.t1 - p.t0) * 0.75 };
+    const base = { ipa: p.ipa, t0: p.t0, t1: p.t1, handle: g.handle, key: ownInstant(tr, p.t0, p.t1, ph.manner === 'nasal', ph.art, ph.abduction) };
     if (stopLike && run === 0) {
       const hold = firstClause(guideFor(p.ipa.replace(/[ʰʱ]$/, '')).hint) + (ph.voiced ? ' and hum…' : ' and wait…');
       const pop = ph.manner === 'affricate' ? 'Let go with a hiss!' : 'Pop! Let go!';

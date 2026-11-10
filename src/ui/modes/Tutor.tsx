@@ -6,11 +6,12 @@ import { COURSES, COURSE_IDS, Course, CourseId, Entry, Example, sayOf } from '..
 import { guideFor, Handle, PLACES, SoundGuide } from '../tutor/guide';
 import { pictureOf } from '../tutor/pictures';
 import { keyTime, poseAt, stagesOf, trajectory, Stage } from '../tutor/motion';
-import { Clip, Outcome, player, Sound, usePlayer, What } from '../tutor/player';
+import { Clip, Outcome, player, Sound, usePlayer, usePlayerTime, What } from '../tutor/player';
 import { FaceCanvas, Layers, setLayers, shapeOf, useLayers } from '../tutor/faces';
 import { Mirror3D } from '../tutor/Mirror3D';
 import { MirrorPhoto } from '../tutor/MirrorPhoto';
 import { hush, narratorVoice, onVoices, sayText, speechText, voiceFor, voiceOf } from '../tutor/speech';
+import { playClip, recordingId, voiceClip } from '../tutor/clips';
 import { recorder, useRecorder } from '../tutor/recorder';
 import { bestMatch, canRecognise, recognise } from '../tutor/recognise';
 import { analyse, judge, Report } from '../tutor/listen';
@@ -18,7 +19,7 @@ import * as Icon from '../tutor/icons';
 import { compactPhones } from '../../dsp/speech/indic';
 import { buildScore } from '../../dsp/speech/sequencer';
 import { PHONEMES } from '../../dsp/speech/phonemes';
-import { textToPhones } from '../../dsp/speech/g2p';
+import { typedLang, typedPhones } from '../tutor/typed';
 import type { Phone } from '../../dsp/speech/g2p';
 
 type Bi = { it: string; en: string };
@@ -48,6 +49,34 @@ function wordPhones(ipa: string): Phone[] {
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * What the mouth is doing at this instant, in words. It follows the player's time by itself (as the scrubber
+ * below does), so that the page around it is not rendered again at every moment of a clip that plays.
+ */
+function NowWords({ title, names }: { title: string; names: string[] }) {
+  const shown = usePlayerTime().face();
+  const words = shown ? shapeOf(shown.pose).words : null;
+  if (!words) return null;
+  return (
+    <dl className="tu-readout" aria-label={title}>
+      <div><dt>{names[0]}</dt><dd>{words.lips}</dd></div>
+      <div><dt>{names[1]}</dt><dd>{words.tongue}</dd></div>
+      <div className={words.noseOpen ? 'air' : ''}><dt>{names[2]}</dt><dd>{words.nose}</dd></div>
+      <div className={words.voiceOn ? 'voice' : ''}><dt>{names[3]}</dt><dd>{words.voice}</dd></div>
+      <div><dt>{names[4]}</dt><dd>{words.air}</dd></div>
+    </dl>
+  );
+}
+
+/** The scrubber: where the time is in the clip, and a hand on it to move it. */
+function Scrub({ duration, label, onSeek }: { duration: number; label: string; onSeek: (t: number) => void }) {
+  const t = Math.min(duration, usePlayerTime().t);
+  return (
+    <input className="tu-range" type="range" min={0} max={duration} step={duration / 500} value={t}
+      style={{ '--at': `${(100 * t) / duration}%` } as React.CSSProperties} aria-label={label} onChange={(e) => onSeek(Number(e.target.value))} />
+  );
+}
 const remembered = (key: string, fallback: boolean) => { try { const v = localStorage.getItem(key); return v === null ? fallback : v === '1'; } catch { return fallback; } };
 const remember = (key: string, v: string) => { try { localStorage.setItem(key, v); } catch { /* private mode */ } };
 
@@ -273,9 +302,18 @@ export function Tutor() {
   /** What is heard with a clip: a real voice at full speed when the browser has one; in slow motion the model's own voice, in step with the mouth. */
   const soundFor = (what: What, speed: TutorSpeed, ex?: Example): Sound => {
     if (speed === 1) {
+      const rate = what === 'sound' ? 0.75 : 0.82;
+      // A recording of the teacher comes first, whatever voices this browser has: it is the same on every
+      // computer, and where each of its sounds starts and stops is known, so the mouth is exactly with it.
+      // (The recordings of Urdu are read from Devanagari by the Hindi voice.)
+      let rec: string | null = null;
+      if (alphabet && !ex) rec = recordingId(alphabet, rate, speechText(entry, alphabet, alphabet === 'ur' ? 'hi' : alphabet, what === 'sound' ? 'sound' : 'word', what === 'sound' ? sayOf(entry, course) : ''));
+      else if (what === 'sound') rec = entry.carrier ? recordingId(entry.carrier.lang, rate, entry.carrier.text) : null;
+      else { const e = ex ?? entry.examples[0]; rec = e ? recordingId(e.lang, rate, e.text) : null; }
       const v = what === 'sound' ? soundVoice() : wordVoice(ex);
-      if (v) { const rate = what === 'sound' ? 0.75 : 0.82; return { kind: 'voice', id: `${v.voice.name}|${rate}|${v.text}`, speak: () => sayText(v.text, v.voice, rate) }; }
-      return entry.silent || (what === 'word' && ex && !ex.ipa) ? { kind: 'none' } : { kind: 'model' };
+      if (v) return { kind: 'voice', id: rec ?? `${v.voice.name}|${rate}|${v.text}`, speak: () => sayText(v.text, v.voice, rate) };
+      if (entry.silent || (what === 'word' && ex && !ex.ipa)) return { kind: 'none' };
+      return rec ? { kind: 'voice', id: rec } : { kind: 'model' };
     }
     return slowSound && !entry.silent ? { kind: 'model' } : { kind: 'none' };
   };
@@ -287,7 +325,11 @@ export function Tutor() {
     if (c) { player.load(c, 0); return player.play(snd); }
     // a word the head cannot show: the voice alone
     player.pause();
-    if (snd.kind === 'voice') await snd.speak().ended;
+    if (snd.kind === 'voice') {
+      const rec = snd.id ? await voiceClip(snd.id) : null;
+      const live = rec ? playClip(rec) : null;
+      if (live) await live.ended; else if (snd.speak) await snd.speak().ended;
+    }
     return 'done';
   };
   const endLesson = () => { lesson.current++; setPhase(null); setRow(null); player.point(null); };
@@ -407,8 +449,9 @@ export function Tutor() {
     endLesson();
     playback.current?.pause();
     player.point(null);
-    const lang = alphabet ?? 'en';
-    const phones = textToPhones(text, lang);
+    // (read by its own writing, whatever course is open: Latin letters in a course of a script are that language's words spelt in Latin)
+    const lang = typedLang(alphabet);
+    const phones = typedPhones(text, alphabet);
     if (!phones.length) return;
     const speed = clip?.speed ?? 1;
     const src = voice.manual.source;
@@ -464,8 +507,6 @@ export function Tutor() {
     : phase === 'speak' ? L({ it: 'Ora dillo tu: ti ascolto.', en: 'Now you say it. I am listening.' })
       : stage?.caption ?? guide.hint;
   const duration = clip?.traj.duration ?? 1;
-  const shown = p.face();
-  const words = shown ? shapeOf(shown.pose).words : null;
   const best = progress.best[course.id] ?? {};
   const done = Object.values(best).filter((s) => s >= 60).length;
   const level = Math.floor(progress.xp / XP_PER_LEVEL) + 1;
@@ -520,15 +561,8 @@ export function Tutor() {
           <button className="tu-arrow" aria-label={L({ it: 'Lettera dopo', en: 'Next letter' })} onClick={() => go(idx + 1)}><Icon.IconChevronRight /></button>
         </div>
         <p className="tu-caption" aria-live="polite">{caption}</p>
-        {words && (
-          <dl className="tu-readout" aria-label={L({ it: 'Che cosa fa la bocca adesso', en: 'What the mouth is doing now' })}>
-            <div><dt>{L({ it: 'Labbra', en: 'Lips' })}</dt><dd>{words.lips}</dd></div>
-            <div><dt>{L({ it: 'Lingua', en: 'Tongue' })}</dt><dd>{words.tongue}</dd></div>
-            <div className={words.noseOpen ? 'air' : ''}><dt>{L({ it: 'Naso', en: 'Nose' })}</dt><dd>{words.nose}</dd></div>
-            <div className={words.voiceOn ? 'voice' : ''}><dt>{L({ it: 'Voce', en: 'Voice' })}</dt><dd>{words.voice}</dd></div>
-            <div><dt>{L({ it: 'Aria', en: 'Air' })}</dt><dd>{words.air}</dd></div>
-          </dl>
-        )}
+        <NowWords title={L({ it: 'Che cosa fa la bocca adesso', en: 'What the mouth is doing now' })}
+          names={[L({ it: 'Labbra', en: 'Lips' }), L({ it: 'Lingua', en: 'Tongue' }), L({ it: 'Naso', en: 'Nose' }), L({ it: 'Voce', en: 'Voice' }), L({ it: 'Aria', en: 'Air' })]} />
         <div className="tu-main">
           <form className="tu-say" onSubmit={(e) => { e.preventDefault(); saySentence(); }}>
             <input value={sentence} onChange={(e) => setSentence(e.target.value)} dir="auto" spellCheck={false}
@@ -557,9 +591,7 @@ export function Tutor() {
               ))}
               <button className="tu-stepper" onClick={() => { endLesson(); player.step(1); }} aria-label={L({ it: 'Passo avanti', en: 'Step forward' })}><Icon.IconStepForward size={15} /></button>
             </div>
-            <input className="tu-range" type="range" min={0} max={duration} step={duration / 500} value={Math.min(duration, p.t)}
-              style={{ '--at': `${(100 * Math.min(duration, p.t)) / duration}%` } as React.CSSProperties}
-              aria-label={L({ it: 'Istante', en: 'Moment' })} onChange={(e) => seek(Number(e.target.value))} />
+            <Scrub duration={duration} label={L({ it: 'Istante', en: 'Moment' })} onSeek={seek} />
           </div>
           <button className={slowSound ? 'tu-icon-btn on' : 'tu-icon-btn'} aria-pressed={slowSound} onClick={() => setSlowSound((v) => { remember(SLOW_SOUND_KEY, v ? '0' : '1'); return !v; })}
             title={L({ it: 'Al rallentatore: la voce del modello, a tempo con il disegno', en: 'In slow motion: the model’s own voice, in step with the picture' })}>

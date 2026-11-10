@@ -46,6 +46,8 @@ export function MirrorPhoto({ face, label, onFail }: { face: () => Face | null; 
     // long enough not to flicker, too short to be seen as a blur of two mouths
     const MOVE = 0.055;
     let from: Shape = 'rest', to: Shape = 'rest', since = -1;
+    /** the shape that is whole on the canvas now (null while one is fading into another) */
+    let shown: Shape | null = null;
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
       const f = getFace.current();
@@ -54,8 +56,12 @@ export function MirrorPhoto({ face, label, onFail }: { face: () => Face | null; 
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
       if (!w || !h) return;
-      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; shown = null; }
+      const st = lipsOf(f.pose.art, shapeOf(f.pose).geom).state;
+      if (word.current && word.current.textContent !== LIP_WORD[st]) word.current.textContent = LIP_WORD[st];
       const want = shapeAt(f);
+      // nothing has changed since the last frame: what is on the canvas is what it should show
+      if (want === to && shown === to && (since < 0 || (now - since) / 1000 >= MOVE) && cv.width === w && cv.height === h) return;
       if (want !== to) {
         // from what is on screen now (the shape arrived at, or the one being left if the move was not over)
         from = since >= 0 && (now - since) / 1000 < MOVE * 0.5 ? from : to;
@@ -70,10 +76,8 @@ export function MirrorPhoto({ face, label, onFail }: { face: () => Face | null; 
         c.globalAlpha = alpha;
         c.drawImage(im, (w - dw) / 2, (h - dh) / 2, dw, dh);
       };
-      if (u < 1) { draw(from, 1); draw(to, u); } else draw(to, 1);
+      if (u < 1) { draw(from, 1); draw(to, u); shown = null; } else { draw(to, 1); shown = to; }
       c.globalAlpha = 1;
-      const st = lipsOf(f.pose.art, shapeOf(f.pose).geom).state;
-      if (word.current && word.current.textContent !== LIP_WORD[st]) word.current.textContent = LIP_WORD[st];
     };
     return () => { dead = true; cancelAnimationFrame(raf); };
   }, []);

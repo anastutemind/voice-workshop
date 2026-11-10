@@ -85,7 +85,10 @@ const HOLE_UPPER = [
 /** The lower lip, the lower incisor's crown and the space in front (canonical, turns with
  *  the jaw). It reaches high enough to meet the upper part with the jaw wide open. */
 const HOLE_LOWER = [
-  12.5, 10.4, 6.95, 10.4, 6.95, 8.45, 6.72, 8.3, 6.58, 7.95, 6.43, 7.55, 6.3, 6.95, 6.6, 6.52, 7.0, 6.18, 7.7, 5.98, 8.2, 6.58, 8.32, 6.6, 12.5, 6.65,
+  12.5, 10.4, 6.95, 10.4, 6.95, 8.45, 6.72, 8.3, 6.58, 7.95, 6.43, 7.55, 6.3, 6.95, 6.6, 6.52, 7.0, 6.18,
+  // (down to the chin, behind the skin that gives way under the lip: the painting's own chin is not drawn there,
+  // where it would stick out in front of the lip's skin when that moves)
+  6.95, 5.75, 7.05, 5.2, 7.6, 4.95, 8.27, 4.97, 12.5, 4.97,
 ];
 
 /** Behind the lips, inside the hole: always tissue or air, so it gets a base of mucosa
@@ -96,20 +99,40 @@ const INNER_LOWER = [6.95, 8.45, 7.05, 8.45, 7.05, 6.18, 7.0, 6.18, 6.6, 6.52, 6
 /** Canonical height where the upper lip's part of the face leaves the backdrop. */
 const BRIDGE_Y = 10.62;
 
-/** x of a polyline (top to bottom) at height y, or -Infinity outside it. */
-function xAt(line: number[], y: number): number {
-  for (let i = 0; i + 3 < line.length; i += 2) {
-    const y0 = line[i + 1], y1 = line[i + 3];
-    if ((y0 - y) * (y1 - y) <= 0 && y0 !== y1) return line[i] + ((y - y0) / (y1 - y0)) * (line[i + 2] - line[i]);
-  }
-  return -Infinity;
-}
-
-/** How far the painted lips stand in front of the model's lip outline (canonical cm). */
-const LIP_BULGE = 0.4;
-/** Where the painted chin leaves the lower hole, and the way the profile runs down from there (canonical, at rest). */
-const CHIN_TOP: [number, number] = [8.36, 6.6];
-const CHIN_DOWN: [number, number] = [-0.62, -0.78];
+/**
+ * The front of the painted face around the mouth, traced on the painting itself (canonical cm, top to
+ * bottom): the upper lip from under the nose to where the lips meet, the lower lip from there to the top of
+ * the chin. The model's lips are the few straight edges the air meets; drawn as they are they cut the
+ * painted lips square. So each lip is drawn with the painting's own profile, moved as the model's lip moves.
+ */
+export const FACE_UPPER = [
+  8.98, 10.62, 8.96, 10.37, 8.96, 10.19, 8.97, 10.01, 9.0, 9.83, 9.05, 9.65, 9.1, 9.47, 9.16, 9.29, 9.21, 9.11, 9.17, 8.93, 9.11, 8.75,
+  9.02, 8.57, 8.86, 8.39, 8.6, 8.2, 8.32, 8.06,
+];
+export const FACE_LOWER = [
+  8.32, 8.06, 8.57, 7.87, 8.66, 7.67, 8.75, 7.49, 8.78, 7.31, 8.8, 7.13, 8.78, 6.95, 8.72, 6.77, 8.53, 6.59,
+  // (and on down the fold to the front of the chin: the skin below a lip gives way with it)
+  8.34, 6.41, 8.2, 6.23, 8.03, 6.05, 7.95, 5.87, 7.98, 5.69, 8.08, 5.51, 8.14, 5.33, 8.22, 5.15, 8.27, 4.97,
+];
+/**
+ * A lower lip that goes down, or forward, goes whole: it is as full when the mouth is open as when it is shut.
+ * What gives way is the skin under it, the fold between the lip and the chin, down to the chin itself. (Giving
+ * way inside the lip, it thinned to a flap whenever the mouth opened, and to a beak when the lips were pushed
+ * forward.) Above the first height the lip moves whole with the model's lip; at the second nothing moves.
+ */
+const LIP_WHOLE = 6.95, CHIN_STILL = 4.97;
+/** Inside the lip and the chin, behind the profile: where the painting of the lower lip is held to the jaw (canonical), from the chin up. */
+const LOWER_HELD = [7.6, 4.95, 7.05, 5.2, 6.95, 5.75, 7.0, 6.18, 6.6, 6.52];
+/** A point inside the lower lip's painting from which all of its outline is seen: its triangles fan out from it. */
+const LOWER_CENTRE: [number, number] = [7.6, 6.2];
+/** Where the model's lips have their front corners (their points 4) when the mouth is as the painting has it: just behind where the painted lips meet. */
+const CORNER_UPPER: [number, number] = [8.22, 8.07];
+const CORNER_LOWER: [number, number] = [7.95, 8.05];
+/** The painted lips' edges behind it, toward the corner of the mouth (where the model's lips have their points 3 and 2). */
+const SEAM_UPPER = [7.8, 8.12, 7.5, 8.2];
+const SEAM_LOWER = [7.05, 7.95, 7.3, 8.03];
+/** The upper lip moves whole below this height, and not at all where it leaves the nose. */
+const LIP_MOVES = 9.3;
 
 /** Inner points of a cubic Hermite curve from a to b, leaving a along ta and reaching b along tb (unit vectors). */
 function hermite(a: number[], ta: number[], b: number[], tb: number[], n = 8): number[] {
@@ -140,12 +163,6 @@ function clipBelow(pts: number[], y: number): number[] {
     }
   }
   return out;
-}
-
-/** A unit vector rotated by `a`. */
-function turn(x: number, y: number, a: number): [number, number] {
-  const l = Math.hypot(x, y) || 1, c = Math.cos(a), s = Math.sin(a);
-  return [(c * x - s * y) / l, (s * x + c * y) / l];
 }
 
 interface Guide {
@@ -239,6 +256,8 @@ export interface HeadScene {
   bend: Tri[];
   /** where the backdrop draws a canonical point of its painting (world) */
   warp: (x: number, y: number) => [number, number];
+  /** where a canonical point of the head goes when it turns with the jaw by a share `w` (0: not at all, 1: wholly), sized and stretched (world) */
+  place: (x: number, y: number, w: number) => [number, number];
   /** world height where the painted neck ends */
   neckEnd: number;
   /** world polygons where no band is drawn: the lips, the incisors' crowns and the opening */
@@ -275,40 +294,59 @@ export interface HeadScene {
 
 type Place = (x: number, y: number) => [number, number];
 
+/** Where the profile lies in the outlines `lipFaces` makes (`upperFace`, `lowerFace`): its first point, and how many it has. */
+export const FACE_PROFILE = { upper: [1, FACE_UPPER.length / 2], lower: [0, FACE_LOWER.length / 2] } as const;
+
+const ease = (t: number) => { const u = Math.max(0, Math.min(1, t)); return u * u * (3 - 2 * u); };
+
 /**
- * Each lip is fuller in front than its outline, as painted, and follows the lip: it starts at
- * the corner where the lip meets the air and rounds forward to the painted face, up to the nose
- * for the upper lip and down to the chin for the lower one. `crown` and `jaw` place canonical
- * points of the still head and of the jaw, `s` is the size, `ja` the jaw's angle and `dJaw`
- * its turn from rest. Every face has the same number of points in every posture.
+ * Each lip with the face in front of it, as painted: its inner side is the model's (the corner where the
+ * lip meets the air, the edge that closes the mouth), its outer side the painting's own profile, carried
+ * along by the lip: wholly at the lip's edge, less and less toward the nose for the upper one and toward
+ * the chin for the lower one, which also turns with the jaw. `crown` and `jaw` place canonical points of
+ * the still head and of the jaw. Every face has the same number of points in every posture, the same as
+ * the painting's at rest (`ul` and `ll` null), onto which it is stretched.
  */
-function lipFaces(ul: number[], ll: number[], s: number, crown: Place, jaw: Place, ja: number, dJaw: number): { upper: number[]; lower: number[] } {
-  const P = (i: number): [number, number] => [ul[2 * i], ul[2 * i + 1]];
-  const Q = (i: number): [number, number] => [ll[2 * i], ll[2 * i + 1]];
-  const down: [number, number] = [0, -1];
-  const nose = crown(xAt(guideHead().front, BRIDGE_Y), BRIDGE_Y);
-  const uBulge = [P(6)[0] + LIP_BULGE * s, P(6)[1]];
-  const upper = [
-    ...crown(7.3, BRIDGE_Y), ...nose,
-    ...hermite(nose, down, uBulge, down), ...uBulge,
-    ...hermite(uBulge, down, P(4), [-1, 0]),
-    ...P(4), ...P(3), ...P(2), ...P(1), ...P(0), ...P(9),
-  ];
-  const lDown = turn(0, -1, ja), lFwd = turn(1, 0, ja);
-  const lBulge = [Q(6)[0] + LIP_BULGE * s * lFwd[0], Q(6)[1] + LIP_BULGE * s * lFwd[1]];
-  const chin = jaw(CHIN_TOP[0], CHIN_TOP[1]);
-  const edge = [8.2, 6.58, 7.7, 5.98, 7.0, 6.18, 6.6, 6.52];
-  const lower = [
-    ...Q(4), ...hermite(Q(4), turn(1, -0.3, ja), lBulge, lDown), ...lBulge,
-    ...hermite(lBulge, lDown, chin, turn(CHIN_DOWN[0], CHIN_DOWN[1], dJaw)), ...chin,
-  ];
-  // back along the bottom of the lower hole, then up the inside of the lip
-  for (let i = 0; i < edge.length; i += 2) lower.push(...jaw(edge[i], edge[i + 1]));
-  lower.push(...Q(1), ...Q(2), ...Q(3));
-  return { upper, lower };
+function lipFaces(ul: number[] | null, ll: number[] | null, rest: { ul: number[]; ll: number[] }, crown: Place, jaw: Place): { upper: number[]; lower: number[]; lowerCentre: [number, number] } {
+  const upper: number[] = [], lower: number[] = [];
+  const P = (i: number): [number, number] => (ul ? [ul[2 * i], ul[2 * i + 1]] : [rest.ul[2 * i], rest.ul[2 * i + 1]]);
+  const Q = (i: number): [number, number] => (ll ? [ll[2 * i], ll[2 * i + 1]] : [rest.ll[2 * i], rest.ll[2 * i + 1]]);
+  // The painted lips are fuller than the model's, whose front corners (its points 4) lie a little behind where
+  // the painted ones meet: the profile is carried by the corner's own movement, and keeps that lead on it.
+  // ---- the upper lip: from the head behind the nose's base, down the profile to the lip's edge, then its inner side
+  upper.push(...crown(7.3, BRIDGE_Y));
+  const s0 = crown(CORNER_UPPER[0], CORNER_UPPER[1]);
+  const dU: [number, number] = ul ? [P(4)[0] - s0[0], P(4)[1] - s0[1]] : [0, 0];
+  for (let i = 0; i < FACE_UPPER.length; i += 2) {
+    const w = ease((BRIDGE_Y - FACE_UPPER[i + 1]) / (BRIDGE_Y - LIP_MOVES));
+    const q = crown(FACE_UPPER[i], FACE_UPPER[i + 1]);
+    upper.push(q[0] + w * dU[0], q[1] + w * dU[1]);
+  }
+  if (ul) upper.push(...P(4), ...P(3), ...P(2));
+  else upper.push(...CORNER_UPPER, ...SEAM_UPPER);
+  upper.push(...P(1), ...P(0), ...P(9));
+  // (and up the back of the lip where the painting has it, to where it leaves the gum: no sliver of the hole
+  // under it is left uncovered when the lip moves away from it)
+  upper.push(...crown(7.24, 9.95));
+  // ---- the lower lip: from its edge down the profile to the chin, back under it, and up its inner side
+  const s1 = jaw(CORNER_LOWER[0], CORNER_LOWER[1]);
+  const dL: [number, number] = ll ? [Q(4)[0] - s1[0], Q(4)[1] - s1[1]] : [0, 0];
+  const held = (y: number) => ease((y - CHIN_STILL) / (LIP_WHOLE - CHIN_STILL));
+  for (let i = 0; i < FACE_LOWER.length; i += 2) {
+    const w = held(FACE_LOWER[i + 1]);
+    const q = jaw(FACE_LOWER[i], FACE_LOWER[i + 1]);
+    lower.push(q[0] + w * dL[0], q[1] + w * dL[1]);
+  }
+  for (let i = 0; i < LOWER_HELD.length; i += 2) lower.push(...jaw(LOWER_HELD[i], LOWER_HELD[i + 1]));
+  lower.push(...Q(1));
+  if (ll) lower.push(...Q(2), ...Q(3), ...Q(4));
+  else lower.push(...SEAM_LOWER, ...CORNER_LOWER);
+  // (the middle of the painting goes half the way of the lip in front of it)
+  const c0 = jaw(LOWER_CENTRE[0], LOWER_CENTRE[1]), wc = 0.5 * held(LOWER_CENTRE[1]);
+  return { upper, lower, lowerCentre: [c0[0] + wc * dL[0], c0[1] + wc * dL[1]] };
 }
 
-let restFaces: { upper: number[]; lower: number[] } | null = null;
+let restFaces: { upper: number[]; lower: number[]; lowerCentre: [number, number] } | null = null;
 
 /** Area-weighted centroid of a polygon. */
 export function centroid(pts: number[]): [number, number] {
@@ -472,8 +510,9 @@ export function headScene(geom: TractGeometry, an: Anatomy, a: Articulators): He
   const P = (i: number): [number, number] => [ul[2 * i], ul[2 * i + 1]];
   const Q = (i: number): [number, number] => [ll[2 * i], ll[2 * i + 1]];
   const id: Place = (x, y) => [x, y];
-  restFaces ??= lipFaces(G.solids.get('upperLip')!, G.solids.get('lowerLip')!, 1, id, id, G.jawAngle, 0);
-  const faces = lipFaces(ul, ll, s, (x, y) => apply(cranium, x, y), (x, y) => place(x, y, 1), geom.jawAngle, dJaw);
+  const guideLips = { ul: G.solids.get('upperLip')!, ll: G.solids.get('lowerLip')! };
+  restFaces ??= lipFaces(null, null, guideLips, id, id);
+  const faces = lipFaces(ul, ll, guideLips, (x, y) => apply(cranium, x, y), (x, y) => place(x, y, 1));
   const upperFace = faces.upper, lowerFace = faces.lower;
   const faceMesh = (rest: number[], now: number[]): Mesh => ({ from: rest, to: now, cFrom: centroid(rest), cTo: centroid(now) });
   // the opening between the lips, from their inner edges to their fronts: air, even where
@@ -524,7 +563,7 @@ export function headScene(geom: TractGeometry, an: Anatomy, a: Articulators): He
     const [rx, ry] = apply(r, gc[0], gc[1]);
     const tex: Mat = [r[0], r[1], r[2], r[3], r[4] + cc[0] - rx, r[5] + cc[1] - ry];
     const area = id === 'upperLip' ? upperFace : id === 'lowerLip' ? lowerFace : undefined;
-    const areaMesh = id === 'upperLip' ? faceMesh(restFaces.upper, upperFace) : id === 'lowerLip' ? faceMesh(restFaces.lower, lowerFace) : undefined;
+    const areaMesh = id === 'upperLip' ? faceMesh(restFaces.upper, upperFace) : id === 'lowerLip' ? { from: restFaces.lower, to: lowerFace, cFrom: restFaces.lowerCentre, cTo: faces.lowerCentre } : undefined;
     let mesh: Sprite['mesh'];
     let drawn = poly;
     if (id === 'tongue') {
@@ -537,7 +576,7 @@ export function headScene(geom: TractGeometry, an: Anatomy, a: Articulators): He
   }
 
   return {
-    s, outline, bands, bend: tris, warp, neckEnd: warp(0, NECK_END)[1], hole, inner, lumen, lower, upper, patch, upperFace, lowerFace, mouth, vestibule, port,
+    s, outline, bands, bend: tris, warp, place, neckEnd: warp(0, NECK_END)[1], hole, inner, lumen, lower, upper, patch, upperFace, lowerFace, mouth, vestibule, port,
     portVelum: half, nasal: [...up2, ...lo2], sprites, velum: vel,
   };
 }

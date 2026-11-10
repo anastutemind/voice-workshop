@@ -88,20 +88,26 @@ export function wallsAt(g: TractGeometry, i: number, z: number, out: Walls): Wal
     out.floor = out.roof - gap;
     return out;
   }
-  // slits: between the incisors, a lip under the teeth, the teeth and the tongue
-  const a = 0.5 * h.width;
-  const gap = az <= a ? d : 0;
+  // slits: between the incisors, a lip under the teeth, the teeth and the tongue. Flesh and teeth leave no
+  // square corners: the slit is drawn with its corners rounded, a little wider so that its area is the same
+  const a = 0.5 * h.width * SLIT_WIDER;
+  const u = a > 0 ? az / a : 1;
+  const gap = u < 1 ? d * Math.sqrt(Math.sqrt(1 - u * u * u * u)) : 0;
   out.roof = h.tUp - 0.5 * (d - gap);
   out.floor = out.roof - gap;
   return out;
 }
+
+/** A slit with rounded corners (|z/a|^4 + |y/b|^4 = 1) has 0.927 of the area of the square-cornered one of the same size: it is drawn this much wider. */
+const SLIT_WIDER = 1 / 0.927;
+const isSlit = (h: RayHit) => !(h.lensP > 0) && !(h.rule === 'lips' || (h.rule === 'teeth' && h.lowId === 'lowerIncisor' && h.upId === 'upperLip'));
 
 /** Lateral half extent (world cm) of the airway of section i. */
 export function airHalfWidth(g: TractGeometry, i: number): number {
   const h = g.hits[i];
   if (h.rule === 'closed') return 0;
   if (h.lensP > 0) return h.lensSides > 0 ? h.lensHalf * g.scale : 0.5 * h.width;
-  return 0.5 * h.width;
+  return 0.5 * h.width * (isSlit(h) ? SLIT_WIDER : 1);
 }
 
 /** Lateral half extent (world cm) of the tissues around section i. */

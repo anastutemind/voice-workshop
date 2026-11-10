@@ -93,9 +93,12 @@ export function speechText(l: Letter, lang: TutorLang, via: TutorLang, what: Say
   if (what === 'name') return l.name;
   // Arabic script, read by a voice of its own: the letter with a short a
   const ARABIC_VOWEL: Record<string, string> = { a: 'أَ', 'ə': 'اَ', i: 'إِ', 'ɪ': 'اِ', u: 'أُ', 'ʊ': 'اُ', e: 'اے', 'ã': 'آں' };
-  if (isVowelSound(l)) return l.glyph === 'ا' ? 'آ' : ARABIC_VOWEL[l.sound] ?? l.word.text;
+  // (the voices read some letters written alone by their names, or as a phrase: آ comes out as "alif madda",
+  // شَ as a sentence. Written with the alif of a long a they are read as the sound.)
+  if (isVowelSound(l)) return l.glyph === 'ا' ? 'أَا' : ARABIC_VOWEL[l.sound] ?? l.word.text;
   if (isMark(l)) return l.word.text;
   if (l.sound === 'ʔ') return 'أَ';
+  if (l.glyph === 'ش') return 'شَا';
   return l.glyph + 'َ';
 }
 

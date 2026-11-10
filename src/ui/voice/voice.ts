@@ -146,7 +146,13 @@ export class VoiceController {
     const p = this._lanes.performer;
     if (p.kind === 'hands') return null;
     const t = this.live();
-    if ((p.kind === 'sentence' || p.kind === 'melody') && t && this.telemetryProgram === p.id) return { t: t.scoreTime, seconds: p.score.duration };
+    if ((p.kind === 'sentence' || p.kind === 'melody') && t && this.telemetryProgram === p.id) {
+      // the score's time of the last report, carried on to the instant that is heard now (the score runs with
+      // the engine's clock): a report is a sixtieth of a second old at best, and much older on a busy page
+      const heard = this.sink?.heardTime?.() ?? null;
+      const on = heard === null ? 0 : Math.max(-0.3, Math.min(0.3, heard - t.time));
+      return { t: Math.max(0, Math.min(p.score.duration, t.scoreTime + on)), seconds: p.score.duration };
+    }
     return { t: Math.min(this.timing.seconds, (this.clock.now() - this.timing.t0) / 1000), seconds: this.timing.seconds };
   }
 

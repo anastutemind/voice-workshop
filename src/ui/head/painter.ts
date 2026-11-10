@@ -75,7 +75,10 @@ function mucosaTile(base?: string): HTMLCanvasElement {
   const N = 128;
   const c = document.createElement('canvas');
   c.width = c.height = N;
-  const g = c.getContext('2d')!;
+  // (kept in the computer's own memory, not the graphics card's: a pattern cut from a tile that lives on the
+  // card has to be fetched back from it at every fill, which costs a twentieth of a second each on a slow card
+  // and made a head take seconds to paint)
+  const g = c.getContext('2d', { willReadFrequently: true })!;
   if (base) {
     g.fillStyle = base;
     g.fillRect(0, 0, N, N);
@@ -165,7 +168,9 @@ export function paintBackdrop(ctx: CanvasRenderingContext2D, sc: HeadScene, worl
     ctx.fill();
     ctx.restore();
   }
-  ctx.imageSmoothingQuality = 'high';
+  // (the painting has 64 pixels to the centimetre: drawn near that size or larger, the plain way of smoothing
+  // shows the same picture as the best one at a fifth of its cost; made much smaller, it would shimmer)
+  ctx.imageSmoothingQuality = Math.hypot(world[0], world[1]) * sc.s >= 48 ? 'low' : 'high';
   for (const b of sc.bands) {
     ctx.save();
     const m = mul(world, b.mat);
@@ -473,4 +478,30 @@ export function paintRim(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Ma
     ctx.stroke();
   }
   ctx.restore();
+}
+
+/** Rounds the inner corner of a lip (where its free edge turns up into the mouth): a lip is not cut square. */
+export function roundLip(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, id: 'upperLip' | 'lowerLip'): void {
+  const p = sc.sprites.find((q) => q.id === id)?.poly;
+  if (!p || p.length < 20) return;
+  const r = 0.3 * sc.s;
+  lc.save();
+  lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
+  lc.globalCompositeOperation = 'destination-out';
+  lc.fillStyle = '#000';
+  // the corner is point 2; its neighbours along the lip are 3 (toward the front) and 1 (up the inside)
+  for (const [k, a, b] of [[2, 3, 1], [4, 5, 3]] as [number, number, number][]) {
+    const c = [p[2 * k], p[2 * k + 1]], u = [p[2 * a] - c[0], p[2 * a + 1] - c[1]], v = [p[2 * b] - c[0], p[2 * b + 1] - c[1]];
+    const lu = Math.hypot(u[0], u[1]) || 1, lv = Math.hypot(v[0], v[1]) || 1;
+    const ru = Math.min(r, lu * 0.5), rv = Math.min(r, lv * 0.5);
+    const A = [c[0] + (u[0] / lu) * ru, c[1] + (u[1] / lu) * ru], B = [c[0] + (v[0] / lv) * rv, c[1] + (v[1] / lv) * rv];
+    lc.beginPath();
+    lc.moveTo(A[0], A[1]);
+    lc.lineTo(c[0], c[1]);
+    lc.lineTo(B[0], B[1]);
+    lc.quadraticCurveTo(c[0], c[1], A[0], A[1]);
+    lc.closePath();
+    lc.fill();
+  }
+  lc.restore();
 }

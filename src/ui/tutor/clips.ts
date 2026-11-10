@@ -7,16 +7,30 @@
  * (public/audio/tutor, made with the system's voices by a script) are
  * optional: without one for what is to be said, the speech voice says it.
  */
+import { heardNow } from './sync';
+
 export interface VoiceClip {
   buffer: AudioBuffer;
   /** where the sound starts and stops in the recording, seconds */
   t0: number;
   t1: number;
+  /** where each sound of what is said starts and stops, seconds from the first moment something is heard: written when the recording was made */
+  marks?: number[];
 }
+
+/**
+ * The voices the recordings were made with, by the language of what they say (Urdu is read from Devanagari
+ * by the Hindi voice): a recording is looked up by its voice, the speed it was asked at, and the text.
+ */
+export const RECORDED_VOICE: Record<string, string> = { ur: 'Lekha', hi: 'Lekha', ar: 'Majed', en: 'Samantha', 'en-GB': 'Daniel' };
+/** The name a recording of `text` in a language goes by (null: no recordings are made in that language). */
+export const recordingId = (lang: string, rate: number, text: string): string | null => (RECORDED_VOICE[lang] ? `${RECORDED_VOICE[lang]}|${rate}|${text}` : null);
 
 const DIR = 'audio/tutor/';
 let ctx: AudioContext | null = null;
-let manifest: Promise<Record<string, string>> | null = null;
+/** what the list of recordings says of one: its file, and the times of its sounds (an older list: the file alone) */
+type Entry = string | { f: string; k?: number[] };
+let manifest: Promise<Record<string, Entry>> | null = null;
 const clips = new Map<string, Promise<VoiceClip | null>>();
 let playing: AudioBufferSourceNode | null = null;
 
@@ -56,14 +70,15 @@ export function voiceClip(id: string): Promise<VoiceClip | null> {
     p = (async () => {
       const ac = audio();
       if (!ac) return null;
-      manifest ??= fetch(DIR + 'manifest.json').then((r) => (r.ok ? (r.json() as Promise<Record<string, string>>) : {})).catch(() => ({}));
-      const file = (await manifest)[id];
-      if (!file) return null;
+      manifest ??= fetch(DIR + 'manifest.json').then((r) => (r.ok ? (r.json() as Promise<Record<string, Entry>>) : {})).catch(() => ({}));
+      const entry = (await manifest)[id];
+      if (!entry) return null;
+      const file = typeof entry === 'string' ? entry : entry.f;
       const r = await fetch(DIR + file);
       if (!r.ok) return null;
       const buffer = await ac.decodeAudioData(await r.arrayBuffer());
       const [t0, t1] = span(buffer);
-      return { buffer, t0, t1 };
+      return { buffer, t0, t1, ...(typeof entry !== 'string' && entry.k ? { marks: entry.k } : {}) };
     })().catch(() => null);
     if (clips.size > 300) clips.clear();
     clips.set(id, p);
@@ -73,8 +88,8 @@ export function voiceClip(id: string): Promise<VoiceClip | null> {
 
 /**
  * Plays a recording. `now()` is the time since its first sample was heard
- * (negative until then), on the audio clock and less the time the sound
- * takes to leave the computer; `ended` resolves when it is over or stopped.
+ * (negative until then): the audio's own clock, read where the sound leaves
+ * the computer; `ended` resolves when it is over or stopped.
  */
 export function playClip(clip: VoiceClip): { now: () => number; ended: Promise<void>; latency: () => number } | null {
   const ac = audio();
@@ -89,7 +104,7 @@ export function playClip(clip: VoiceClip): { now: () => number; ended: Promise<v
   playing = src;
   const ended = new Promise<void>((res) => { src.onended = () => { if (playing === src) playing = null; res(); }; });
   const late = () => (ac.outputLatency || 0) + (ac.baseLatency || 0);
-  return { now: () => ac.currentTime - at - late(), ended, latency: late };
+  return { now: () => heardNow(ac, performance.now()) - at, ended, latency: late };
 }
 
 /** Cuts the recording that is playing. */
