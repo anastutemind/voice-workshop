@@ -55,6 +55,23 @@ const FLOOR = 0.4;
 /** How far above and below the mouth the corner's own movement reaches. */
 const near = (y: number) => ease(1 - Math.abs(y - LIPS_MEET) / 1.8);
 
+/**
+ * The inside of the mouth as two grids of points (canonical cm, row by row from the bottom: x, y interleaved):
+ * the upper one goes with the head (the upper teeth, the roof), the lower one with the jaw (the lower teeth,
+ * the tongue). Between parted lips each photograph's inside is laid on them where its own posture had them, so
+ * its teeth keep their size and place: the lips uncover them, they are never stretched.
+ */
+export const INSIDE_X = Array.from({ length: 19 }, (_, i) => 5.4 + 0.25 * i);
+export const INSIDE_UPPER_Y = Array.from({ length: 12 }, (_, j) => 7.5 + 0.2 * j);
+export const INSIDE_LOWER_Y = Array.from({ length: 16 }, (_, j) => 6.0 + 0.2 * j);
+/** where the upper grid fades out downward (it is laid over the lower one): clear at the first, whole at the second */
+export const INSIDE_FADE: [number, number] = [7.7, 8.1];
+export function insideGrid(ys: number[]): Float32Array {
+  const out = new Float32Array(2 * INSIDE_X.length * ys.length);
+  ys.forEach((y, j) => INSIDE_X.forEach((x, i) => { out[2 * (j * INSIDE_X.length + i)] = x; out[2 * (j * INSIDE_X.length + i) + 1] = y; }));
+  return out;
+}
+
 /** The knots at rest (canonical cm), row by row from the neck up: x, y interleaved. */
 export const NET_REST: Float32Array = (() => {
   const out = new Float32Array(2 * NX * NY);

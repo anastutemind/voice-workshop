@@ -59,7 +59,25 @@ MOUTHS = {
     'open':  dict(u=(8.5, 8.65), l=(8.05, 6.36), corner=(6.08, 7.35), up=[(6.45, 7.92), (7.0, 8.2), (7.5, 8.43), (8.0, 8.57)], low=[(6.45, 6.78), (7.0, 6.54), (7.5, 6.34), (7.8, 6.25)]),
     'o':     dict(u=(8.85, 8.38), l=(8.5, 7.62), corner=(7.0, 7.65), up=[(7.6, 7.9), (8.1, 8.1), (8.5, 8.27)], low=[(7.5, 7.6), (8.0, 7.67)]),
     'round': dict(u=(9.05, 8.3), l=(9.05, 8.3), corner=(7.85, 8.08), up=[(8.2, 8.1), (8.5, 8.15), (8.8, 8.22)], low=None),
+    'mid':   dict(u=(8.05, 8.45), l=(8.0, 8.03), corner=(6.46, 8.07), up=[(7.0, 8.21), (7.45, 8.29), (7.84, 8.40)], low=[(7.0, 8.05), (7.45, 8.02), (7.8, 8.02)]),
+    'e':     dict(u=(8.1, 8.44), l=(8.05, 7.95), corner=(6.44, 8.07), up=[(7.0, 8.24), (7.45, 8.34), (7.9, 8.41)], low=[(7.0, 8.01), (7.45, 7.96), (7.85, 7.93)]),
+    # ('spread', a broad smile, is left out: its corner, drawn far back, stretched the cheek into streaks where the
+    # model's spread lips leave the corner; 's' and 'e' show the spread mouth)
+    'fv':    dict(u=(8.07, 8.45), l=(8.04, 7.98), corner=(6.44, 8.07), up=[(7.0, 8.21), (7.45, 8.29), (7.9, 8.43)], low=[(7.0, 8.01), (7.45, 7.94), (7.8, 7.92)]),
+    'th':    dict(u=(8.27, 8.45), l=(8.56, 7.14), corner=(6.01, 7.92), up=[(6.48, 8.21), (7.0, 8.31), (7.65, 8.41)], low=[(6.48, 7.75), (7.0, 7.42), (7.65, 7.3), (8.3, 7.18)]),
+    'l':     dict(u=(8.17, 8.45), l=(8.0, 7.0), corner=(5.9, 7.6), up=[(6.48, 8.05), (7.0, 8.21), (7.65, 8.34)], low=[(6.48, 7.1), (7.0, 7.07), (7.65, 6.95)]),
+    's':     dict(u=(8.07, 8.62), l=(7.97, 7.88), corner=(5.83, 8.11), up=[(6.15, 8.4), (7.0, 8.6), (7.65, 8.67)], low=[(6.15, 7.98), (7.0, 7.88), (7.65, 7.82)]),
+    'sh':    dict(u=(9.45, 8.38), l=(9.4, 8.11), corner=(7.71, 8.01), up=[(8.23, 8.05), (8.76, 8.24), (9.15, 8.34)], low=[(8.23, 8.01), (8.76, 8.11), (9.15, 8.14)]),
+    # made by the editing model from the photographs (scripts/mirror-generate.ts side, scripts/skin-prep.py)
+    'open1': dict(u=(8.5, 8.35), l=(8.46, 8.29), corner=(6.54, 8.19), up=[(7.0, 8.26), (7.65, 8.37), (8.23, 8.39)], low=[(7.0, 8.18), (7.65, 8.24), (8.23, 8.29)]),
+    'open2': dict(u=(7.97, 8.54), l=(7.57, 7.97), corner=(6.02, 7.92), up=[(6.48, 8.14), (7.0, 8.27), (7.65, 8.44)], low=[(6.48, 7.6), (7.0, 7.38), (7.35, 7.55)]),
+    'open3': dict(u=(8.31, 8.72), l=(7.52, 7.45), corner=(6.17, 7.84), up=[(6.57, 8.16), (7.13, 8.37), (7.85, 8.58)], low=[(6.49, 7.62), (6.95, 7.2), (7.3, 7.3)]),
+    'owide': dict(u=(8.89, 8.27), l=(7.65, 6.39), corner=(6.67, 6.81), up=[(7.0, 7.2), (7.45, 7.53), (7.97, 7.92), (8.43, 8.14)], low=[(6.8, 6.61), (7.13, 6.35), (7.4, 6.3)]),
+    # (the edit of lips pressed together, 'press', is left out: its lips meet in a cleft the model's pressed lips
+    # tear open; the face at rest shows them shut)
 }
+# where the edits are (put in this frame by scripts/skin-prep.py); the others are public/skin/<shape>.webp
+MADE = '/private/tmp/claude-501/vw-faces/side'
 # the painting's own places (canonical cm), read off its outline
 PLATE = dict(tip=(10.70, 11.75), nose=(9.00, 10.75), top=(9.20, 9.10), meet=(8.31, 8.10), bottom=(8.78, 7.15), fold=(7.96, 5.85), chin=(8.27, 4.75), throat=(3.95, 2.65))
 # and the photographs' throat, which no mouth shape moves
@@ -182,6 +200,28 @@ def tps(src, dst):
     return at
 
 
+def smooth_outline(rgba, r=4):
+    """The outline of a cut-out without notches or spikes narrower than about 2r pixels (its alpha closed, then
+    opened), the colour carried into what it gains from the skin beside it."""
+    a = rgba[..., 3].astype(np.uint8)
+    f = lambda img, flt: np.asarray(Image.fromarray(img).filter(flt))
+    k = 2 * r + 1
+    closed = f(f(a, ImageFilter.MaxFilter(k)), ImageFilter.MinFilter(k))
+    opened = f(f(closed, ImageFilter.MinFilter(k)), ImageFilter.MaxFilter(k))
+    na = np.asarray(Image.fromarray(opened).filter(ImageFilter.GaussianBlur(0.8))).astype(np.float32)
+    out = rgba.copy()
+    gain = na > rgba[..., 3] + 1
+    if gain.any():
+        w = rgba[..., 3:4] / 255.0
+        blur = lambda v: np.asarray(Image.fromarray(np.clip(v, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(3))).astype(np.float32)
+        num = np.stack([blur(rgba[..., c] * w[..., 0]) for c in range(3)], -1)
+        den = blur(255 * w[..., 0])[..., None] / 255.0
+        fill = num / np.maximum(den, 1e-3)
+        out[..., :3] = np.where(gain[..., None], fill, rgba[..., :3])
+    out[..., 3] = na
+    return out
+
+
 def bake(photo, bend, path):
     """The photograph bent onto the painting, as a picture of the whole frame."""
     out = np.zeros((H, W, 4), dtype=np.float32)
@@ -204,7 +244,7 @@ def bake(photo, bend, path):
         px_ = np.concatenate([np.where(a > 1e-3, mix[:, :3] / np.maximum(a, 1e-3), 0), a], axis=1)
         px_[~ok] = 0
         out[rows[0]:rows[-1] + 1] = px_.reshape(len(rows), W, 4)
-    Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), 'RGBA').save(path)
+    Image.fromarray(np.clip(smooth_outline(out), 0, 255).astype(np.uint8), 'RGBA').save(path)
 
 
 def defringe(photo):
@@ -216,9 +256,12 @@ def defringe(photo):
     near = 255 * blur(lum * a / 255) / np.maximum(blur(a), 1)   # the brightness of the skin around
     dark = (lum < 0.62 * near) & (a > 0)
     clear = a < 128
+    # (only in the cut-out's own soft edge: a dark crease of the skin that reaches the outline, under the lower lip
+    # or where the lips meet, is skin, and clearing it cut a notch into the profile)
+    edge = a < 250
     for _ in range(6):
         grown = np.asarray(Image.fromarray((clear * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(3))) > 0
-        clear = clear | (grown & dark)
+        clear = clear | (grown & dark & edge)
     soft = np.asarray(Image.fromarray(((~clear) * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(0.9))).astype(np.float32)
     out = photo.copy()
     out[..., 3] = np.minimum(a, np.where(clear, 0, soft))
@@ -245,7 +288,7 @@ def main():
     tmp = tempfile.mkdtemp()
     with open(os.path.join(tmp, 'points.json'), 'w') as f:
         json.dump({'points': [[float(p[0]), float(p[1]), s] for p, s in rest]}, f)
-    subprocess.run(['npx', 'tsx', 'scripts/skin-poses.ts', os.path.join(tmp, 'points.json'), os.path.join(tmp, 'poses.json')], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(['npx', 'tsx', 'scripts/skin-poses.ts', os.path.join(tmp, 'points.json'), os.path.join(tmp, 'poses.json'), ','.join(n for n in MOUTHS if n != 'rest')], check=True, stdout=subprocess.DEVNULL)
     poses = json.load(open(os.path.join(tmp, 'poses.json')))
     knots_rest = np.array(poses['rest']).reshape(-1, 2)
     assert poses['rowLower'] == BELOW_ROWS, 'the net has other rows than this script thinks'
@@ -254,7 +297,8 @@ def main():
 
     uv, photos, bends = {}, {}, {}
     for name, mouth in MOUTHS.items():
-        photo = defringe(np.asarray(Image.open(f'public/skin/{name}.webp').convert('RGBA')).astype(np.float32))
+        src = os.path.join(MADE, f'{name}.png') if os.path.exists(os.path.join(MADE, f'{name}.png')) and not os.path.exists(f'public/skin/{name}.webp') else f'public/skin/{name}.webp'
+        photo = smooth_outline(defringe(np.asarray(Image.open(src).convert('RGBA')).astype(np.float32)))
         sm = photo[..., 3] > 128
         # the photograph's own places: found on a first outline, which is then traced from its own chin
         first = outline(sm, (10.82, 11.90), (8.57, 5.60), THROAT)
@@ -295,7 +339,9 @@ def main():
         kn = np.array(shapes[name]['knots']).reshape(poses['ny'], poses['nx'], 2)
         low, up = BELOW_ROWS, BELOW_ROWS + 2
         apart = np.hypot(kn[up, :, 0] - kn[low, :, 0], kn[up, :, 1] - kn[low, :, 1])
-        out['shapes'][name] = {'at': poses['shapes'][name]['at'], 'apart': r4(apart), 'uv': r4(np.stack([(px(q[:, 0]) - bx0) / (bx1 - bx0), (py(q[:, 1]) - by0) / (by1 - by0)], axis=1).ravel())}
+        to_uv = lambda q: r4(np.stack([(px(q[:, 0]) - bx0) / (bx1 - bx0), (py(q[:, 1]) - by0) / (by1 - by0)], axis=1).ravel())
+        ins = {k: to_uv(bends[name](np.array(poses['shapes'][name][k]).reshape(-1, 2))) for k in ('insideUpper', 'insideLower')}
+        out['shapes'][name] = {'at': poses['shapes'][name]['at'], 'features': poses['shapes'][name]['features'], 'apart': r4(apart), 'uv': to_uv(q), **ins}
         im = Image.fromarray(photos[name][by0:by1, bx0:bx1].astype(np.uint8), 'RGBA')
         png = os.path.join(tmp, f'{name}.png')
         im.save(png)

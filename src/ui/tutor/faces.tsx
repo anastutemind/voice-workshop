@@ -20,6 +20,7 @@ import type { Pose, Stage } from './motion';
 import { CLOSED_AREA, Flow, flowOf, lipsOf, LipState, readout, Readout, REST_ART, restGeom } from './readout';
 import type { Handle } from './guide';
 import { paintSkin, skinCanvas, SkinFades, skinVersion } from './skin';
+import { mouthFeatures } from './visemes';
 
 /** What a picture shows: a pose, the part of the mouth to point at, and what it is doing. */
 export interface Face {
@@ -676,7 +677,8 @@ function drawSide(ctx: CanvasRenderingContext2D, over: CanvasRenderingContext2D,
       const cv = skinCanvas();
       if (cv && (sk.pose !== face.pose || sk.key !== key || cv.width !== cw || cv.height !== ch)) {
         const yOf = (y: number) => world[3] * y + world[5];
-        paintSkin(sc, world, cw, ch, inside, { ...edges, neck: [yOf(sc.neckEnd), yOf(sc.neckEnd + 1.6 * sc.s)] });
+        // (the photographs of the mouth are chosen by its measures: the same the mirror's are chosen by)
+        paintSkin(sc, world, cw, ch, inside, { ...edges, neck: [yOf(sc.neckEnd), yOf(sc.neckEnd + 1.6 * sc.s)] }, mouthFeatures(a, geom));
         sk.pose = face.pose; sk.key = key;
       }
       if (skinHost && cv && cv.parentElement !== skinHost) skinHost.replaceChildren(cv);
