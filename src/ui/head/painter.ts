@@ -1,25 +1,30 @@
 /**
- * Paints the illustrated head on a canvas from a `HeadScene`: the backdrop in
- * its bands, then the soft parts drawn from the acoustic geometry. The air
- * itself (coloured by the sound field) is drawn afterwards by the head view,
- * so nothing here can hide it.
+ * Paints the illustrated head on a canvas from a `HeadScene`: the plate
+ * stretched by the scene's sheet, and the few parts drawn from the acoustic
+ * geometry over the air (the velum, the wet rim of the air's walls). The air
+ * itself (coloured by the sound field) is drawn by the head view, so nothing
+ * here can hide it.
+ *
+ * On a 2D canvas the sheet is drawn by the processor, pixel by pixel (a few
+ * hundredths of a second); the tutor's side view draws it with the graphics
+ * card instead (gl.ts).
  */
-import { HeadScene, Mat, Mesh, mul, PIXELS } from './scene';
+import { HeadScene, Mat, mul, PIXELS } from './scene';
 import { BACKDROP_FRAME, framePixel } from './frame';
-import { fieldColor } from '../canvas';
-
-/** Silent air, as the head view draws it. */
-const AIR = '#05070c';
-const AIR_TINT = fieldColor(0.12, 0.28);
+import { PLATE_BG } from './gl';
 
 export interface Backdrop {
   img: HTMLImageElement;
+  /** the head's silhouette on the plate (white on the head, black on its background), once loaded */
+  mask: HTMLImageElement | null;
   /** colours picked from the painting, so the drawn parts match it */
   tone: { tissue: string; skin: string; mucosa: string; tongue: string };
   /** a tile of mucosa in the painting's colour, made when first needed */
   mucosaTile?: HTMLCanvasElement;
   /** the same flecks on nothing, to lay over a colour of its own */
   flecksTile?: HTMLCanvasElement;
+  /** the plate's pixels with its silhouette, for drawing it on a 2D canvas (made when first needed) */
+  pixels?: { data: Uint8ClampedArray; w: number; h: number };
 }
 
 /** The pictures asked for so far, by address: loading, loaded, or failed. */
@@ -34,9 +39,21 @@ export function getBackdrop(url = 'anatomy/head-real.jpg'): Backdrop | null {
     backdrops.set(url, (e = entry));
     const img = new Image();
     img.decoding = 'async';
-    img.onload = () => { entry.bd = { img, tone: sampleTones(img) }; };
+    // the plate and its silhouette (where the head is, its dark background left out): the backdrop is there once
+    // both are (a silhouette that cannot load leaves the plate whole)
+    const mUrl = url.replace(/head-real\.jpg$/, 'head-mask.png');
+    let mask: HTMLImageElement | null = null, waiting = mUrl !== url ? 2 : 1;
+    const done = () => { if (--waiting === 0 && img.complete && img.naturalWidth) entry.bd = { img, mask, tone: sampleTones(img) }; };
+    img.onload = done;
     img.onerror = () => { entry.failed = true; };
     img.src = url;
+    if (mUrl !== url) {
+      const m = new Image();
+      m.decoding = 'async';
+      m.onload = () => { mask = m; done(); };
+      m.onerror = done;
+      m.src = mUrl;
+    }
   }
   return e?.bd ?? null;
 }
@@ -115,6 +132,13 @@ function mucosa(ctx: CanvasRenderingContext2D, bd: Backdrop, flecks = false): Ca
   return p;
 }
 
+/** A polygon's points the other way round. */
+function reversed(p: number[]): number[] {
+  const out = new Array<number>(p.length);
+  for (let i = 0, n = p.length / 2; i < n; i++) { out[2 * i] = p[2 * (n - 1 - i)]; out[2 * i + 1] = p[2 * (n - 1 - i) + 1]; }
+  return out;
+}
+
 function poly(ctx: CanvasRenderingContext2D, p: number[]): void {
   ctx.moveTo(p[0], p[1]);
   for (let i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
@@ -141,6 +165,7 @@ function smoothPoly(ctx: CanvasRenderingContext2D, p: number[]): void {
 /** Clip to everything outside the polygons (coordinates of the current transform). */
 function clipOut(ctx: CanvasRenderingContext2D, polys: number[][], R = 200): void {
   for (const p of polys) {
+    if (p.length < 6) continue;
     ctx.beginPath();
     ctx.rect(-R, -R, 2 * R, 2 * R);
     poly(ctx, p);
@@ -148,50 +173,162 @@ function clipOut(ctx: CanvasRenderingContext2D, polys: number[][], R = 200): voi
   }
 }
 
+// ------------------------------------------------------------ the plate on a 2D canvas
+
+/** The plate's pixels, each its colour times how much of it the head covers, and that cover (made once). */
+function platePixels(bd: Backdrop): Backdrop['pixels'] | null {
+  if (bd.pixels) return bd.pixels;
+  const w = BACKDROP_FRAME.width, h = BACKDROP_FRAME.height;
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const c = cv.getContext('2d', { willReadFrequently: true });
+  if (!c) return null;
+  c.drawImage(bd.img, 0, 0, w, h);
+  const d = c.getImageData(0, 0, w, h).data;
+  c.clearRect(0, 0, w, h);
+  // (without its silhouette the plate is laid on whole)
+  if (bd.mask) c.drawImage(bd.mask, 0, 0, w, h);
+  else { c.fillStyle = '#fff'; c.fillRect(0, 0, w, h); }
+  const m = c.getImageData(0, 0, w, h).data;
+  const bg = PLATE_BG.map((v) => v * 255);
+  for (let i = 0; i < d.length; i += 4) {
+    const a = m[i] / 255;
+    d[i] = Math.max(0, d[i] - (1 - a) * bg[0]);
+    d[i + 1] = Math.max(0, d[i + 1] - (1 - a) * bg[1]);
+    d[i + 2] = Math.max(0, d[i + 2] - (1 - a) * bg[2]);
+    d[i + 3] = m[i];
+  }
+  return (bd.pixels = { data: d, w, h });
+}
+
+let scratch: { cv: HTMLCanvasElement; img: ImageData | null } | null = null;
+
 /**
- * The backdrop: a base of tissue under the whole head, then each band of the
- * painting in its place, and the bend under the jaw triangle by triangle.
- * `world` maps world centimetres to canvas pixels. Without `base` the bands
- * are laid over what the canvas already holds.
+ * The plate stretched by the scene's sheet, on a 2D canvas, pixel by pixel: every triangle of the sheet is
+ * filled with the plate as it lies under it at rest (sampled between its pixels), each part of a cut cell only on
+ * its side. `world` maps world centimetres to the canvas's pixels (no turn). Returns false if the plate's pixels
+ * cannot be read.
  */
-export function paintBackdrop(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, base = true): void {
-  if (base) {
-    ctx.save();
-    setMat(ctx, world);
-    clipOut(ctx, sc.hole);
-    ctx.beginPath();
-    poly(ctx, sc.outline);
-    ctx.fillStyle = bd.tone.tissue;
-    ctx.fill();
-    // flecked like the mucosa, where a wide jaw opens a gap between the bands
-    ctx.fillStyle = mucosa(ctx, bd, true);
-    ctx.fill();
-    ctx.restore();
+export function paintPlate(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop): boolean {
+  const px = platePixels(bd);
+  if (!px) return false;
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  if (!scratch) scratch = { cv: document.createElement('canvas'), img: null };
+  if (scratch.cv.width !== W || scratch.cv.height !== H || !scratch.img) {
+    scratch.cv.width = W; scratch.cv.height = H;
+    scratch.img = new ImageData(W, H);
   }
-  // (the painting has 64 pixels to the centimetre: drawn near that size or larger, the plain way of smoothing
-  // shows the same picture as the best one at a fifth of its cost; made much smaller, it would shimmer)
-  ctx.imageSmoothingQuality = Math.hypot(world[0], world[1]) * sc.s >= 48 ? 'low' : 'high';
-  for (const b of sc.bands) {
-    ctx.save();
-    const m = mul(world, b.mat);
-    setMat(ctx, m);
-    for (const c of b.clip) { ctx.beginPath(); poly(ctx, c); ctx.clip(); }
-    clipOut(ctx, b.exclude);
-    setMat(ctx, world);
-    clipOut(ctx, sc.hole);
-    if (b.world) { ctx.beginPath(); poly(ctx, b.world); ctx.clip(); }
-    setMat(ctx, mul(m, PIXELS));
-    ctx.drawImage(bd.img, 0, 0, BACKDROP_FRAME.width, BACKDROP_FRAME.height);
-    ctx.restore();
+  const out = scratch.img!.data;
+  out.fill(0);
+  const sh = sc.sheet();
+  const Wp = sh.warp;
+  const [a, , , d, e, f] = world;
+  const K = BACKDROP_FRAME.width / (BACKDROP_FRAME.x1 - BACKDROP_FRAME.x0);
+  const src = px.data, sw = px.w, shh = px.h;
+  const aa = Math.abs(a) * sc.s;
+  /** one triangle: screen corners (sx, sy), plate corners (u, v in plate pixels), and how far inside a part's lines each corner is */
+  const tri = (x0: number, y0: number, x1: number, y1: number, x2: number, y2: number,
+    u0: number, v0: number, u1: number, v1: number, u2: number, v2: number,
+    s0: number, s1: number, s2: number, t0: number, t1: number, t2: number, bias: number) => {
+    const area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+    if (Math.abs(area) < 1e-9) return;
+    const minX = Math.max(0, Math.floor(Math.min(x0, x1, x2))), maxX = Math.min(W - 1, Math.ceil(Math.max(x0, x1, x2)));
+    const minY = Math.max(0, Math.floor(Math.min(y0, y1, y2))), maxY = Math.min(H - 1, Math.ceil(Math.max(y0, y1, y2)));
+    if (minX > maxX || minY > maxY) return;
+    const inv = 1 / area;
+    const cut = s0 < 999 || s1 < 999 || s2 < 999 || t0 < 999 || t1 < 999 || t2 < 999;
+    for (let y = minY; y <= maxY; y++) {
+      const py = y + 0.5;
+      for (let x = minX; x <= maxX; x++) {
+        const pxx = x + 0.5;
+        // barycentric weights of the pixel's centre
+        let w1 = ((pxx - x0) * (y2 - y0) - (x2 - x0) * (py - y0)) * inv;
+        let w2 = ((x1 - x0) * (py - y0) - (pxx - x0) * (y1 - y0)) * inv;
+        let w0 = 1 - w1 - w2;
+        if (w0 < -1e-7 || w1 < -1e-7 || w2 < -1e-7) continue;
+        if (w0 < 0) w0 = 0; if (w1 < 0) w1 = 0; if (w2 < 0) w2 = 0;
+        let cover = 1;
+        if (cut) {
+          const k = Math.min(w0 * s0 + w1 * s1 + w2 * s2, w0 * t0 + w1 * t1 + w2 * t2);
+          cover = Math.max(0, Math.min(1, k * aa + 0.5 + bias));
+          if (cover <= 0) continue;
+        }
+        // the plate between its four nearest pixels
+        const u = w0 * u0 + w1 * u1 + w2 * u2 - 0.5, v = w0 * v0 + w1 * v1 + w2 * v2 - 0.5;
+        const iu = Math.floor(u), iv = Math.floor(v);
+        if (iu < 0 || iv < 0 || iu + 1 >= sw || iv + 1 >= shh) continue;
+        const fu = u - iu, fv = v - iv;
+        const p00 = 4 * (iv * sw + iu), p10 = p00 + 4, p01 = p00 + 4 * sw, p11 = p01 + 4;
+        const k00 = (1 - fu) * (1 - fv), k10 = fu * (1 - fv), k01 = (1 - fu) * fv, k11 = fu * fv;
+        const sa = (src[p00 + 3] * k00 + src[p10 + 3] * k10 + src[p01 + 3] * k01 + src[p11 + 3] * k11) * cover;
+        if (sa <= 0.5) continue;
+        const sr = (src[p00] * k00 + src[p10] * k10 + src[p01] * k01 + src[p11] * k11) * cover;
+        const sg = (src[p00 + 1] * k00 + src[p10 + 1] * k10 + src[p01 + 1] * k01 + src[p11 + 1] * k11) * cover;
+        const sb = (src[p00 + 2] * k00 + src[p10 + 2] * k10 + src[p01 + 2] * k01 + src[p11 + 2] * k11) * cover;
+        const o = 4 * (y * W + x), keep = 1 - sa / 255;
+        // (the image keeps colours not multiplied by their cover: laid over what is there, then divided back)
+        const da = out[o + 3], dk = da * keep;
+        const na = sa + dk;
+        out[o] = (sr + (out[o] * dk) / 255) * (255 / na);
+        out[o + 1] = (sg + (out[o + 1] * dk) / 255) * (255 / na);
+        out[o + 2] = (sb + (out[o + 2] * dk) / 255) * (255 / na);
+        out[o + 3] = na;
+      }
+    }
+  };
+  const SX = (x: number) => a * x + e, SY = (y: number) => d * y + f;
+  const U = (x: number) => (x - BACKDROP_FRAME.x0) * K, V = (y: number) => (BACKDROP_FRAME.y1 - y) * K;
+  // the still frame round the sheet
+  const fr = sh.frameRest, fa = sh.frameAt;
+  for (let q = 0; q < fr.length; q += 8) {
+    for (const [i, j, k] of [[0, 1, 2], [0, 2, 3]]) {
+      tri(SX(fa[q + 2 * i]), SY(fa[q + 2 * i + 1]), SX(fa[q + 2 * j]), SY(fa[q + 2 * j + 1]), SX(fa[q + 2 * k]), SY(fa[q + 2 * k + 1]),
+        U(fr[q + 2 * i]), V(fr[q + 2 * i + 1]), U(fr[q + 2 * j]), V(fr[q + 2 * j + 1]), U(fr[q + 2 * k]), V(fr[q + 2 * k + 1]), 1e3, 1e3, 1e3, 1e3, 1e3, 1e3, 0);
+    }
   }
+  // the sheet: whole cells, then the parts of cut cells
+  const R = Wp.rest, At = sh.at;
+  // (air and soft tissue, the parts of cut cells, then bone and teeth over them)
+  for (const pc of [...Wp.whole.slice(0, Wp.soft), ...Wp.parts, ...Wp.whole.slice(Wp.soft)]) {
+    const l = pc.lines;
+    const side = (n: number, o: number) => (l.length >= o + 3 ? l[o] * R[2 * n] + l[o + 1] * R[2 * n + 1] + l[o + 2] : 1e3);
+    const bias = pc.takesRest ? 1 : 0;
+    for (const [i, j, k] of [[0, 1, 2], [0, 2, 3]]) {
+      const A0 = pc.k[i], A1 = pc.k[j], A2 = pc.k[k];
+      tri(SX(At[2 * A0]), SY(At[2 * A0 + 1]), SX(At[2 * A1]), SY(At[2 * A1 + 1]), SX(At[2 * A2]), SY(At[2 * A2 + 1]),
+        U(R[2 * A0]), V(R[2 * A0 + 1]), U(R[2 * A1]), V(R[2 * A1 + 1]), U(R[2 * A2]), V(R[2 * A2 + 1]),
+        side(A0, 0), side(A1, 0), side(A2, 0), side(A0, 3), side(A1, 3), side(A2, 3), bias);
+    }
+  }
+  const sc2 = scratch.cv.getContext('2d', { willReadFrequently: true })!;
+  sc2.putImageData(scratch.img!, 0, 0);
   ctx.save();
-  setMat(ctx, world);
-  ctx.beginPath();
-  poly(ctx, sc.outline);
-  ctx.clip();
-  clipOut(ctx, sc.hole);
-  for (const t of sc.bend) paintTriangle(ctx, world, t.from, t.to, bd.img);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(scratch.cv, 0, 0);
   ctx.restore();
+  return true;
+}
+
+/**
+ * Takes the air out of a painted layer, but not where something is kept (`keep`): what is behind the layer shows
+ * through the air.
+ */
+export function cutAirOut(lc: CanvasRenderingContext2D, world: Mat, cut: number[][], keep: number[][]): void {
+  lc.save();
+  setMat(lc, world);
+  clipOut(lc, keep);
+  lc.globalCompositeOperation = 'destination-out';
+  lc.fillStyle = '#000';
+  // (all in one path, each turning the same way: where two meet, no hairline of the layer is left between them)
+  lc.beginPath();
+  for (const q of cut) {
+    if (q.length < 6) continue;
+    let turn = 0;
+    for (let i = 0, n = q.length / 2; i < n; i++) { const j = (i + 1) % n; turn += q[2 * i] * q[2 * j + 1] - q[2 * j] * q[2 * i + 1]; }
+    poly(lc, turn >= 0 ? q : reversed(q));
+  }
+  lc.fill('nonzero');
+  lc.restore();
 }
 
 /**
@@ -227,118 +364,21 @@ export function paintGlow(ctx: CanvasRenderingContext2D, sc: HeadScene, world: M
   ctx.restore();
 }
 
-/**
- * What the geometry draws over the backdrop, before the air: the space behind
- * the lips, the air above the velum, the patches where the painting had air,
- * and the moving solids carrying their own painting.
- */
-export function paintSoftParts(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop): void {
-  paintLinings(ctx, sc, world, bd);
-  paintSolids(ctx, sc, world, bd);
-}
-
-/** The mucosa behind the lips and wherever the painting's air is tissue now; with `port`, the air above the velum too. */
-export function paintLinings(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, port = true): void {
-  const s = sc.s;
+/** The velum (the model's, painted: the plate's own is in another posture), with the wet rim of the air above it. */
+export function paintVelumOver(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop): void {
+  paintVelum(ctx, sc.velum, world, sc.s, mucosa(ctx, bd, true));
   ctx.save();
   setMat(ctx, world);
-
-  // mucosa behind the lips, under the tongue's tip, and wherever the painting's air is tissue now
-  ctx.fillStyle = mucosa(ctx, bd);
-  for (const q of [...sc.inner, sc.vestibule, ...sc.patch]) {
-    ctx.beginPath();
-    poly(ctx, q);
-    ctx.fill();
-  }
-  if (!port) { ctx.restore(); return; }
-
-  // the air above the velum: air like the rest, with a wet rim along its vault and wall
-  ctx.beginPath();
-  poly(ctx, sc.port);
-  ctx.fillStyle = AIR;
-  ctx.fill();
-  ctx.fillStyle = AIR_TINT;
-  ctx.fill();
-  ctx.save();
   clipOut(ctx, [sc.port]);
   ctx.beginPath();
   const from = 2 * sc.portVelum - 2;
   ctx.moveTo(sc.port[from], sc.port[from + 1]);
   for (let i = from + 2; i < sc.port.length; i += 2) ctx.lineTo(sc.port[i], sc.port[i + 1]);
-  ctx.lineWidth = 0.07 * s;
+  ctx.lineWidth = 0.07 * sc.s;
   ctx.lineJoin = 'round';
   ctx.strokeStyle = 'rgba(255,205,212,0.32)';
   ctx.stroke();
   ctx.restore();
-  ctx.restore();
-}
-
-/** The mucosa between the upper incisor and the upper lip alone: the lip lies on the tooth. */
-export function paintVestibule(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop): void {
-  ctx.save();
-  setMat(ctx, world);
-  ctx.fillStyle = mucosa(ctx, bd);
-  ctx.beginPath();
-  poly(ctx, sc.vestibule);
-  ctx.fill();
-  ctx.restore();
-}
-
-/** The moving solids carrying their own painting (all of them, or only those named), and the velum. */
-export function paintSolids(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, only?: readonly string[], velum = true): void {
-  const s = sc.s;
-  // the velum before the palate, which hides its root as the bone hides where it starts
-  if (velum) paintVelum(ctx, sc.velum, world, s, mucosa(ctx, bd, true));
-
-  for (const sp of sc.sprites) {
-    if (only && !only.includes(sp.id)) continue;
-    const tooth = sp.id === 'upperIncisor' || sp.id === 'lowerIncisor';
-    const texture = () => {
-      setMat(ctx, mul(mul(world, sp.tex), PIXELS));
-      ctx.drawImage(bd.img, 0, 0, BACKDROP_FRAME.width, BACKDROP_FRAME.height);
-    };
-    if (sp.area) {
-      // a lip with the face in front of it: skin under the painting, wherever it does not reach;
-      // the rest of the lip lies where the jaw's own painting already has it
-      ctx.save();
-      setMat(ctx, world);
-      ctx.beginPath();
-      poly(ctx, sp.area);
-      ctx.fillStyle = bd.tone.skin;
-      ctx.fill();
-      ctx.clip();
-      if (sp.areaMesh) paintMesh(ctx, world, sp.areaMesh, bd.img);
-      else texture();
-      ctx.restore();
-      continue;
-    }
-    ctx.save();
-    setMat(ctx, world);
-    ctx.beginPath();
-    poly(ctx, sp.poly);
-    ctx.fillStyle = tooth ? '#efe7d6' : sp.id === 'tongue' ? bd.tone.tongue : sp.id === 'palate' ? '#e9dcc0' : bd.tone.mucosa;
-    ctx.fill();
-    ctx.clip();
-    if (sp.mesh) {
-      paintMesh(ctx, world, sp.mesh, bd.img);
-    } else {
-      ctx.beginPath();
-      poly(ctx, sp.painted);
-      ctx.clip();
-      texture();
-    }
-    ctx.restore();
-    if (tooth) {
-      ctx.save();
-      setMat(ctx, world);
-      ctx.beginPath();
-      poly(ctx, sp.poly);
-      ctx.lineWidth = 0.025 * s;
-      ctx.strokeStyle = 'rgba(160,140,110,0.7)';
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
 }
 
 /** The affine map taking the triangle p0 p1 p2 onto q0 q1 q2, or null if p is degenerate. */
@@ -351,22 +391,6 @@ function triangleMap(p: number[], q: number[]): Mat | null {
   const m0 = (A * d - C * b) / det, m2 = (C * a - A * c) / det;
   const m1 = (B * d - D * b) / det, m3 = (D * a - B * c) / det;
   return [m0, m1, m2, m3, q[0] - m0 * p[0] - m2 * p[1], q[1] - m1 * p[0] - m3 * p[1]];
-}
-
-/**
- * A solid that changes shape, its painting stretched onto it: a fan of triangles from
- * its centre, each mapping the painted triangle at rest onto the same triangle now.
- * Each triangle is clipped a little larger than itself so no seam shows between them.
- */
-function paintMesh(ctx: CanvasRenderingContext2D, world: Mat, mesh: Mesh, img: HTMLImageElement): void {
-  const { from, to, cFrom, cTo } = mesh;
-  const n = from.length / 2;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    const p = [cFrom[0], cFrom[1], from[2 * i], from[2 * i + 1], from[2 * j], from[2 * j + 1]];
-    const q = [cTo[0], cTo[1], to[2 * i], to[2 * i + 1], to[2 * j], to[2 * j + 1]];
-    paintTriangle(ctx, world, p, q, img);
-  }
 }
 
 /** The painting's triangle p (canonical) drawn onto the triangle q (world), clipped a
@@ -469,39 +493,16 @@ export function paintRim(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Ma
   ctx.strokeStyle = 'rgba(255,205,212,0.32)';
   // where the two walls touch (closed lips, a stop) there is no air to have a rim
   const shut = (i: number) => Math.hypot(sc.upper[i] - sc.lower[i], sc.upper[i + 1] - sc.lower[i + 1]) < 0.03 * sc.s;
-  for (const e of [sc.lower, sc.upper]) {
+  // nor where the wall jumps from one part to another across open air (from the tongue's tip to the teeth)
+  // (and where a grid line ends in open air, with no wall under or over it)
+  const jump = (e: number[], i: number) => Math.hypot(e[i] - e[i - 2], e[i + 1] - e[i - 1]) > 0.4 * sc.s;
+  for (const [e, open] of [[sc.lower, sc.bare.lower], [sc.upper, sc.bare.upper]] as const) {
     ctx.beginPath();
     for (let i = 0; i < e.length; i += 2) {
-      if (i === 0 || (shut(i - 2) && shut(i))) ctx.moveTo(e[i], e[i + 1]);
+      if (i === 0 || (shut(i - 2) && shut(i)) || jump(e, i) || open[i / 2] || open[i / 2 - 1]) ctx.moveTo(e[i], e[i + 1]);
       else ctx.lineTo(e[i], e[i + 1]);
     }
     ctx.stroke();
   }
   ctx.restore();
-}
-
-/** Rounds the inner corner of a lip (where its free edge turns up into the mouth): a lip is not cut square. */
-export function roundLip(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, id: 'upperLip' | 'lowerLip'): void {
-  const p = sc.sprites.find((q) => q.id === id)?.poly;
-  if (!p || p.length < 20) return;
-  const r = 0.3 * sc.s;
-  lc.save();
-  lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
-  lc.globalCompositeOperation = 'destination-out';
-  lc.fillStyle = '#000';
-  // the corner is point 2; its neighbours along the lip are 3 (toward the front) and 1 (up the inside)
-  for (const [k, a, b] of [[2, 3, 1], [4, 5, 3]] as [number, number, number][]) {
-    const c = [p[2 * k], p[2 * k + 1]], u = [p[2 * a] - c[0], p[2 * a + 1] - c[1]], v = [p[2 * b] - c[0], p[2 * b + 1] - c[1]];
-    const lu = Math.hypot(u[0], u[1]) || 1, lv = Math.hypot(v[0], v[1]) || 1;
-    const ru = Math.min(r, lu * 0.5), rv = Math.min(r, lv * 0.5);
-    const A = [c[0] + (u[0] / lu) * ru, c[1] + (u[1] / lu) * ru], B = [c[0] + (v[0] / lv) * rv, c[1] + (v[1] / lv) * rv];
-    lc.beginPath();
-    lc.moveTo(A[0], A[1]);
-    lc.lineTo(c[0], c[1]);
-    lc.lineTo(B[0], B[1]);
-    lc.quadraticCurveTo(c[0], c[1], A[0], A[1]);
-    lc.closePath();
-    lc.fill();
-  }
-  lc.restore();
 }
