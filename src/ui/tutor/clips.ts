@@ -14,8 +14,10 @@ export interface VoiceClip {
   /** where the sound starts and stops in the recording, seconds */
   t0: number;
   t1: number;
-  /** where each sound of what is said starts and stops, seconds from the first moment something is heard: written when the recording was made */
+  /** where each sound of what is said starts and stops, seconds from `from`: written when the recording was made */
   marks?: number[];
+  /** what the marks are counted from: the instant the recording first gets loud (align.ts rise; a number: through that loudness), or, in recordings made before, the first moment something is heard */
+  from?: 'rise' | 'onset' | number;
 }
 
 /**
@@ -28,8 +30,8 @@ export const recordingId = (lang: string, rate: number, text: string): string | 
 
 const DIR = 'audio/tutor/';
 let ctx: AudioContext | null = null;
-/** what the list of recordings says of one: its file, and the times of its sounds (an older list: the file alone) */
-type Entry = string | { f: string; k?: number[] };
+/** what the list of recordings says of one: its file, the times of its sounds and what they are counted from (an older list: the file alone) */
+type Entry = string | { f: string; k?: number[]; z?: 'rise' | number };
 let manifest: Promise<Record<string, Entry>> | null = null;
 const clips = new Map<string, Promise<VoiceClip | null>>();
 let playing: AudioBufferSourceNode | null = null;
@@ -78,7 +80,7 @@ export function voiceClip(id: string): Promise<VoiceClip | null> {
       if (!r.ok) return null;
       const buffer = await ac.decodeAudioData(await r.arrayBuffer());
       const [t0, t1] = span(buffer);
-      return { buffer, t0, t1, ...(typeof entry !== 'string' && entry.k ? { marks: entry.k } : {}) };
+      return { buffer, t0, t1, ...(typeof entry !== 'string' && entry.k ? { marks: entry.k, from: entry.z ?? ('onset' as const) } : {}) } as VoiceClip;
     })().catch(() => null);
     if (clips.size > 300) clips.clear();
     clips.set(id, p);

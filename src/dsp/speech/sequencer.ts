@@ -287,7 +287,8 @@ function englishDuration(u: Unit, next: Unit | undefined, prev: Unit | undefined
     if (pc && nc) pr *= 0.5; else if (pc || nc) pr *= 0.7;
     if (u.phraseFinal && u.coda) pr *= 1.4;
   }
-  return (min + (inh - min) * pr) / 1000;
+  // a consonant marked long (ː) is held: the "mmm" and "sss" a child is taught to say a letter with
+  return ((min + (inh - min) * pr) / 1000) * (u.p.long && !u.vowel ? 3 : 1);
 }
 
 function italianDuration(u: Unit, next: Unit | undefined, prev: Unit | undefined): number {

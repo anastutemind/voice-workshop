@@ -141,19 +141,31 @@ export class VoiceController {
     return this.locks.get(c)!;
   }
 
-  /** How far the performance has got, s (null for the hands). */
-  progress(): { t: number; seconds: number } | null {
+  /**
+   * How far the performance has got, s (null for the hands). `heard`: the time is that of what is heard now,
+   * read from the audio (false: the engine has not reported on this performance yet, or cannot be heard, and
+   * the time is the wall clock's since it was asked for, which runs ahead of the sound by the time it takes to
+   * start).
+   */
+  progress(): { t: number; seconds: number; heard: boolean } | null {
     const p = this._lanes.performer;
     if (p.kind === 'hands') return null;
-    const t = this.live();
+    const t = this.running ? this.telemetry : null;
     if ((p.kind === 'sentence' || p.kind === 'melody') && t && this.telemetryProgram === p.id) {
-      // the score's time of the last report, carried on to the instant that is heard now (the score runs with
-      // the engine's clock): a report is a sixtieth of a second old at best, and much older on a busy page
+      // The score runs with the engine's clock, so the score's time of the last report is carried on to the
+      // engine's time of the sound heard now. A report is a sixtieth of a second old at best, and much older on a
+      // busy page, which hands them on late: however old, it still tells where the score was at its engine time.
+      // (It cannot be ahead of the report by more than the report's age, nor behind it by more than the time
+      // the sound takes to leave the computer: a reading outside that is not believed.)
+      const age = (this.clock.now() - this.telemetryTime) / 1000;
       const heard = this.sink?.heardTime?.() ?? null;
-      const on = heard === null ? 0 : Math.max(-0.3, Math.min(0.3, heard - t.time));
-      return { t: Math.max(0, Math.min(p.score.duration, t.scoreTime + on)), seconds: p.score.duration };
+      if (heard !== null) {
+        const on = Math.max(-0.5, Math.min(age + 0.3, heard - t.time));
+        return { t: Math.max(0, Math.min(p.score.duration, t.scoreTime + on)), seconds: p.score.duration, heard: true };
+      }
+      if (age * 1000 < LIVE_MS) return { t: Math.max(0, Math.min(p.score.duration, t.scoreTime)), seconds: p.score.duration, heard: true };
     }
-    return { t: Math.min(this.timing.seconds, (this.clock.now() - this.timing.t0) / 1000), seconds: this.timing.seconds };
+    return { t: Math.min(this.timing.seconds, (this.clock.now() - this.timing.t0) / 1000), seconds: this.timing.seconds, heard: false };
   }
 
   subscribe = (fn: () => void): (() => void) => { this.listeners.add(fn); return () => this.listeners.delete(fn); };

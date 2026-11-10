@@ -35,7 +35,7 @@ const PROGRESS_KEY = 'voice-workshop.tutor.progress';
 const SLOW_SOUND_KEY = 'voice-workshop.tutor.slowSound';
 const NARRATE_KEY = 'voice-workshop.tutor.narrate';
 /** the recogniser's language for each alphabet */
-const LOCALE: Record<string, string> = { ur: 'ur-PK', ar: 'ar-SA', hi: 'hi-IN' };
+const LOCALE: Record<string, string> = { ur: 'ur-PK', ar: 'ar-SA', hi: 'hi-IN', en: 'en-US' };
 const XP_PER_LEVEL = 60;
 
 
@@ -143,7 +143,7 @@ const Tiles = memo(function Tiles({ course, idx, best, onPick }: { course: Cours
             {sec.entries.map((e) => {
               const k = i++;
               const g = course.id === 'ipa' ? guideFor(e.glyph) : guideFor(e.sound);
-              const score = best[e.glyph];
+              const score = best[e.key ?? e.glyph];
               return (
                 <button key={e.glyph + k} ref={k === idx ? on : undefined} className={k === idx ? 'tu-tile on' : 'tu-tile'} style={{ '--place': PLACES[g.place].colour } as React.CSSProperties}
                   title={course.id === 'ipa' ? e.name : `${e.roman} · ${e.word.roman}`} aria-pressed={k === idx} onClick={() => onPick(k)}>
@@ -221,7 +221,8 @@ function ScoreRing({ score }: { score: number }) {
 
 /**
  * Letters: a pronunciation teacher for the alphabets of Urdu, Arabic and
- * Hindi and for the whole International Phonetic Alphabet. One sound at a
+ * Hindi, for English read by its sounds (phonics), and for the whole
+ * International Phonetic Alphabet. One sound at a
  * time. A real voice says it; the head shows it, from the painted anatomy to
  * the skin of the face, layer by layer, with the part that works named, an
  * arrow from where it rests to where it goes, the air and the voice; the
@@ -277,7 +278,9 @@ export function Tutor() {
   const nameVoice = (): { voice: SpeechSynthesisVoice; text: string } | null => {
     if (!alphabet) return narrator ? { voice: narrator, text: entry.name } : null;
     const t = voiceFor(alphabet);
-    return t && alphabet !== 'hi' ? { voice: t.voice, text: speechText(entry, alphabet, t.via, 'name', '') } : null;
+    // (a Hindi letter's name is its sound; a pair of English letters has no name of its own)
+    const text = t && alphabet !== 'hi' ? speechText(entry, alphabet, t.via, 'name', '') : '';
+    return t && text ? { voice: t.voice, text } : null;
   };
 
   // ---- the clips of this entry
@@ -360,9 +363,9 @@ export function Tutor() {
   // ---- the learner's turn: listen, decode, compare
   const award = (score: number) => setProgress((pr) => {
     const mine = pr.best[course.id] ?? {};
-    const before = mine[entry.glyph];
+    const before = mine[entry.key ?? entry.glyph];
     const next: Progress = {
-      best: { ...pr.best, [course.id]: { ...mine, [entry.glyph]: Math.max(before ?? 0, score) } },
+      best: { ...pr.best, [course.id]: { ...mine, [entry.key ?? entry.glyph]: Math.max(before ?? 0, score) } },
       xp: pr.xp + Math.round(score / 10) + (score >= 85 && (before ?? 0) < 85 ? 5 : 0),
     };
     remember(PROGRESS_KEY, JSON.stringify(next));
@@ -522,7 +525,7 @@ export function Tutor() {
         <nav className="tu-seg" role="tablist" aria-label={L({ it: 'Corso', en: 'Course' })} style={{ '--n': COURSE_IDS.length } as React.CSSProperties}>
           {COURSE_IDS.map((id) => (
             <button key={id} role="tab" aria-selected={id === course.id} className={id === course.id ? 'on' : ''} onClick={() => id !== course.id && go(0, id)}>
-              <span className={`script-${id}`} dir={COURSES[id].dir}>{id === 'ipa' ? 'ə' : COURSES[id].native}</span>
+              <span className={`script-${id}`} dir={COURSES[id].dir}>{id === 'ipa' ? 'ə' : id === 'en' ? 'Aa' : COURSES[id].native}</span>
               <small>{COURSES[id].name}</small>
             </button>
           ))}
@@ -609,7 +612,7 @@ export function Tutor() {
             {course.id === 'ipa'
               ? <h2>{entry.roman}</h2>
               : <h2><span className={script} dir={course.dir}>{entry.name}</span><em>{entry.roman}</em></h2>}
-            <p>{course.id === 'ipa' ? entry.name : guide.like ? `${L({ it: 'come', en: 'like' })} ${guide.like}` : ''}</p>
+            <p>{course.id === 'ipa' ? entry.name : course.id === 'en' ? `${L({ it: 'come in', en: 'as in' })} “${entry.word.text}”` : guide.like ? `${L({ it: 'come', en: 'like' })} ${guide.like}` : ''}</p>
           </div>
         </header>
 
@@ -740,7 +743,7 @@ export function Tutor() {
           <header><h3 className="tu-hud">{course.id === 'ipa' ? L({ it: 'Nelle lingue', en: 'In languages' }) : L({ it: 'Una parola', en: 'A word' })}</h3></header>
           {course.id !== 'ipa' && (
             <div className="tu-word">
-              <span className="pic" aria-hidden>{pictureOf(entry.word.meaning)}</span>
+              <span className="pic" aria-hidden>{entry.word.pic ?? pictureOf(entry.word.meaning)}</span>
               <div className="txt">
                 <b className={script} dir={course.dir}>{entry.word.text}</b>
                 <span><em>{entry.word.roman}</em> · {entry.word.meaning}</span>

@@ -182,8 +182,9 @@ describe('the letter tutor', () => {
       for (const l of al.letters) {
         const at = `${lang} ${l.glyph} (${l.roman})`;
         expect(l.sound === 'ã' || !!PHONEMES[l.sound], at).toBe(true);
-        expect(seen.has(l.glyph), at).toBe(false);
-        seen.add(l.glyph);
+        // (two letters written alike, the two th of English, are told apart by a key of their own)
+        expect(seen.has(l.key ?? l.glyph), at).toBe(false);
+        seen.add(l.key ?? l.glyph);
         const g = guideFor(l.sound);
         expect(PLACES[g.place], at).toBeDefined();
         expect(g.lips.length && g.tongue.length && g.air.length && g.voice.length, at).toBeTruthy();
@@ -197,6 +198,10 @@ describe('the letter tutor', () => {
     expect(ALPHABETS.ar.letters.length).toBeGreaterThanOrEqual(28);
     expect(ALPHABETS.ur.letters.length).toBeGreaterThanOrEqual(38);
     expect(ALPHABETS.hi.letters.length).toBeGreaterThanOrEqual(44);
+    // English: the 26 letters, then the pairs, the long vowels and the other vowel sounds of phonics
+    expect(ALPHABETS.en.letters.filter((l) => /^[A-Z][a-z]$/.test(l.glyph)).length).toBe(26);
+    for (const g of ['sh', 'ch', 'th', 'ng', 'ph', 'wh', 'a_e', 'ee', 'i_e', 'o_e', 'u_e', 'ə']) expect(ALPHABETS.en.letters.some((l) => l.glyph === g), g).toBe(true);
+    expect(ALPHABETS.en.letters.filter((l) => l.glyph === 'th').map((l) => l.sound).sort()).toEqual(['ð', 'θ']);
   });
   it('the guide covers every consonant and vowel the tutor uses, in plain words', () => {
     const sounds = new Set(TUTOR_LANGS.flatMap((l) => ALPHABETS[l].letters.map((x) => x.sound)));

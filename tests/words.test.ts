@@ -1,5 +1,6 @@
 /**
- * In whole words and sentences of the four languages, at the instant that
+ * In whole words and sentences of the four languages (and of the English
+ * course, where Latin letters are English too), at the instant that
  * shows each sound, the mouth makes that sound: a stop is closed where that
  * stop is made, lips are shut for p, b, m, the lower lip is on the top teeth
  * for f and v, air goes through the nose for a nasal, a rounded vowel is
@@ -13,10 +14,11 @@ import { DEFAULT_ANATOMY, DEFAULT_ARTICULATORS, DEFAULT_TEETH } from '../src/dsp
 import { PHONEMES } from '../src/dsp/speech/phonemes';
 import { buildScore } from '../src/dsp/speech/sequencer';
 import { poseAt, stagesOf, trajectory } from '../src/ui/tutor/motion';
-import { flowOf, lipsOf, narrowest } from '../src/ui/tutor/readout';
+import { CLOSED_AREA, flowOf, lipsOf, narrowest } from '../src/ui/tutor/readout';
 import { typedPhones } from '../src/ui/tutor/typed';
+import type { TutorLang } from '../src/ui/store';
 
-type Course = 'ur' | 'hi' | 'ar' | null;
+type Course = TutorLang | null;
 const LINES: [string, Course][] = [
   // Urdu
   ['آم', 'ur'], ['بکری', 'ur'], ['خرگوش', 'ur'], ['دروازہ', 'ur'], ['ٹماٹر', 'ur'], ['چھٹی', 'ur'], ['ژالہ', 'ur'], ['غریب', 'ur'], ['قلم', 'ur'], ['پھول', 'ur'], ['بھائی', 'ur'], ['ڑ', 'ur'],
@@ -30,6 +32,17 @@ const LINES: [string, Course][] = [
   // English
   ['strengths', null], ['sixths', null], ['squirrel', null], ['rhythm', null], ['thorough', null], ['bubble', null], ['mammoth', null], ['fifth', null], ['vivid', null],
   ['the quick brown fox jumps over the lazy dog', null], ['she sells sea shells by the sea shore', null], ['peter piper picked a peck of pickled peppers', null], ['my name is Walid', null],
+  // harder Urdu: clusters, the puffed and the curled letters side by side, the throat
+  ['مستحکم', 'ur'], ['خوشبو', 'ur'], ['پھڑپھڑانا', 'ur'], ['ڈھونڈنا', 'ur'], ['قہقہہ', 'ur'], ['استقلال', 'ur'], ['ژالہ باری', 'ur'], ['کچا پاپڑ پکا پاپڑ', 'ur'], ['خوش آمدید', 'ur'],
+  // harder Hindi: conjuncts of three, the curled sounds, a tongue twister
+  ['स्वतंत्रता', 'hi'], ['उत्कृष्ट', 'hi'], ['संस्कृत', 'hi'], ['आश्चर्य', 'hi'], ['विद्यालय', 'hi'], ['द्वार', 'hi'], ['कच्चा पापड़ पक्का पापड़', 'hi'], ['चंदू के चाचा ने चंदू की चाची को चांदी के चम्मच से चटनी चटाई', 'hi'],
+  // harder Arabic: the emphatics, the throat, doubled letters
+  ['مُسْتَقْبَل', 'ar'], ['اِسْتِقْلال', 'ar'], ['ضَفادِع', 'ar'], ['ظِلّ', 'ar'], ['تَطَوُّر', 'ar'], ['صُنْدوق', 'ar'], ['عُصْفور', 'ar'], ['مُدَرِّسَة', 'ar'], ['السلام عليكم ورحمة الله', 'ar'],
+  // the English course: its words, and the tongue twisters of the sounds it teaches
+  ['apple ball cat dog egg fish goat hat igloo jam kite lion moon', 'en'], ['nest octopus pig queen rabbit sun tiger umbrella van web fox zebra', 'en'],
+  ['ship cheese thumb feather king phone whale cake tree bike bone cube', 'en'], ['spoon car mermaid cow boy banana', 'en'],
+  ['twelfth', 'en'], ['judge', 'en'], ['church', 'en'], ['vision', 'en'], ['breathe', 'en'], ['months', 'en'], ['bright', 'en'], ['splash', 'en'],
+  ['the big black bug bit the big black bear', 'en'], ['which witch is which', 'en'], ['how now brown cow', 'en'], ['thank you very much', 'en'], ['a proper copper coffee pot', 'en'],
 ];
 
 const BILABIAL = /^(p|b|m|pʰ|bʱ)$/, LABIODENTAL = /^(f|v|ʋ)$/, ROUNDED = /^(u|o|ʊ|ɔ)$/, OPEN = /^(a|ɑ|æ)$/;
@@ -54,8 +67,12 @@ function faults(text: string, course: Course): Fault[] {
     const here = narrowest(geom);
     const stop = ph.manner === 'stop' || ph.manner === 'nasal' || ph.manner === 'affricate';
     if (stop && st.part === 'hold') {
+      // (closed where the sound closes; in a cluster the next stop may already be closed too, further back: the
+      // t of "istqlāl" holds while the back of the tongue closes for the q, as a speaker's does)
+      const closedNear = (geom.lipArea < CLOSED_AREA && Math.abs(geom.rays[geom.lastRay].sc - own.sc) <= 1.6)
+        || geom.hits.some((h, i) => i >= 2 && i <= geom.lastRay && !h.outside && h.area < CLOSED_AREA && Math.abs(geom.rays[i].sc - own.sc) <= 1.6);
       if (!flow.blocked) bad(`the mouth is not closed (narrowest ${here.area.toFixed(2)} cm² at ${here.sc.toFixed(1)})`);
-      else if (Math.abs(here.sc - own.sc) > 1.6) bad(`closed at ${here.sc.toFixed(1)} cm, the sound closes at ${own.sc.toFixed(1)}`);
+      else if (!closedNear) bad(`closed at ${here.sc.toFixed(1)} cm, the sound closes at ${own.sc.toFixed(1)}`);
     }
     if (BILABIAL.test(st.ipa) && (st.part === 'hold' || ph.manner === 'nasal') && lips.state !== 'closed') bad(`lips ${lips.state}, not closed`);
     if (LABIODENTAL.test(st.ipa) && lips.state !== 'teeth') bad(`lips ${lips.state}, not on the teeth`);

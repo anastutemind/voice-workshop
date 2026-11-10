@@ -215,12 +215,20 @@ export class Player {
               if (my !== this.token || r !== 'done') finish(r); else rest();
             });
           });
-          // (the time of what is heard, and a frame's lead on it, as for a recording)
+          // (the time of what is heard, and a frame's lead on it, as for a recording. Until the voice is heard
+          // the mouth waits in its first posture: the wall clock since the voice was asked for runs ahead of it
+          // by the time the audio takes to start, and the picture would then have to jump back; only if the
+          // engine says nothing for a while is the wall clock followed)
+          const trace: number[] = [];
+          if (import.meta.env.DEV && typeof window !== 'undefined') Object.assign(window, { tutorSync: { kind: 'model', trace, traj: clip.traj, pace: this.pace } });
           this.clock = () => {
             const p = voice.lanes.performer.kind === 'sentence' ? voice.progress() : null;
-            return p ? Math.min(speech, p.t + this.pace.lead()) : this.t;
+            return p && (p.heard || p.t > 0.4) ? Math.min(speech, p.t + this.pace.lead()) : this.t;
           };
-          const loop = () => { this.tick(); this.run(my, loop); };
+          const loop = () => {
+            if (import.meta.env.DEV) { const p = voice.progress(); if (p?.heard) trace.push(p.t, this.t, performance.now()); }
+            this.tick(); this.run(my, loop);
+          };
           this.run(my, loop);
           return;
         }
@@ -235,7 +243,7 @@ export class Player {
             // drawn as far ahead of it as a frame takes to be seen
             const f = fit(clip.traj, clip.score.phones, rec);
             const trace: number[] = [];
-            if (import.meta.env.DEV && typeof window !== 'undefined') Object.assign(window, { tutorSync: { t0: rec.t0, t1: rec.t1, dur: rec.buffer.duration, latency: live.latency(), trace, fit: f, rec, traj: clip.traj, now: live.now, pace: this.pace } });
+            if (import.meta.env.DEV && typeof window !== 'undefined') Object.assign(window, { tutorSync: { kind: 'recording', t0: rec.t0, t1: rec.t1, dur: rec.buffer.duration, latency: live.latency(), trace, fit: f, rec, traj: clip.traj, now: live.now, pace: this.pace } });
             this.clock = () => Math.min(speech, f.at(live.now() + this.pace.lead()));
             const loop = () => {
               const now = live.now();
