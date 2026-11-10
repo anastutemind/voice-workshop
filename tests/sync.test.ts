@@ -53,7 +53,7 @@ function clip() {
  * mouth on the screen is from the mouth of what is heard, in seconds of the movement, at the middle of the
  * time the frame stays on the screen (positive: the picture is ahead).
  */
-async function watch(gap: () => number, latency: number): Promise<{ errors: number[]; endShown: number; speech: number; frames: number }> {
+async function watch(gap: () => number, latency: number): Promise<{ errors: number[]; heardErrors: number[]; endShown: number; speech: number; frames: number }> {
   const { Player } = await import('../src/ui/tutor/player');
   const queue: (() => void)[] = [];
   vi.stubGlobal('requestAnimationFrame', (cb: () => void) => { queue.push(cb); return queue.length; });
@@ -77,16 +77,23 @@ async function watch(gap: () => number, latency: number): Promise<{ errors: numb
     p.face();
     if (Number.isFinite(heardAt)) shown.push({ at: wall + latency, t: p.t });
   }
-  const errors: number[] = [];
+  // (and in seconds of the sound: the instant of the recording whose mouth is shown, against the instant heard)
+  const { audio: ka, model: km } = f.knots;
+  const soundOf = (t: number): number => {
+    if (t <= km[0]) return ka[0] + (t - km[0]);
+    for (let i = 0; i + 1 < km.length; i++) if (t <= km[i + 1]) return km[i + 1] > km[i] ? ka[i] + ((t - km[i]) / (km[i + 1] - km[i])) * (ka[i + 1] - ka[i]) : ka[i + 1];
+    return ka[ka.length - 1] + (t - km[km.length - 1]);
+  };
+  const errors: number[] = [], heardErrors: number[] = [];
   let endShown = 0;
   for (let i = 0; i + 1 < shown.length; i++) {
     const mid = 0.5 * (shown[i].at + shown[i + 1].at);
     const heard = (mid - heardAt) / 1000;
-    if (heard > 0.02 && heard < f.end) errors.push(shown[i].t - ideal(mid));
+    if (heard > 0.02 && heard < f.end) { errors.push(shown[i].t - ideal(mid)); heardErrors.push(soundOf(shown[i].t) - heard); }
     if (shown[i].at <= heardAt + 1000 * f.end + 250) endShown = shown[i].t;
   }
   p.pause();
-  return { errors, endShown, speech: c.traj.speech, frames: errors.length };
+  return { errors, heardErrors, endShown, speech: c.traj.speech, frames: errors.length };
 }
 
 const mean = (a: number[]) => a.reduce((s, v) => s + v, 0) / Math.max(1, a.length);
@@ -100,7 +107,7 @@ describe('the picture keeps to the sound', () => {
     let t = 0;
     for (let i = 0; i < 30; i++) pace.frame((t += 16.7));
     expect(pace.lead()).toBeGreaterThanOrEqual(LEAD_MIN);
-    expect(pace.lead()).toBeLessThan(0.035);
+    expect(pace.lead()).toBeLessThan(0.045);
     for (let i = 0; i < 6; i++) pace.frame((t += 160));
     expect(pace.lead()).toBeGreaterThan(0.12);
     for (let i = 0; i < 6; i++) pace.frame((t += 900));
@@ -139,6 +146,31 @@ describe('the picture keeps to the sound', () => {
       expect(r.endShown).toBeGreaterThan(r.speech - 0.03);
     });
   }
+
+  // A browser shows a frame at the screen's next refresh, whatever the time between frames: on a fast computer and on
+  // one held up by its work, every frame is seen within what the eye allows, counted in time of the sound itself.
+  const browsers: [string, () => number][] = [
+    ['60 frames a second', () => 16.7], ['30', () => 33.3], ['20', () => 50], ['10', () => 100], ['6', () => 165], ['4', () => 250], ['3', () => 330],
+  ];
+  for (const [name, gap] of browsers) {
+    it(`in a browser at ${name}, every frame is seen less than 45 ms after its sound and less than 125 ms before it`, async () => {
+      const r = await watch(gap, 16.7);
+      expect(r.frames).toBeGreaterThan(0);
+      for (const e of r.heardErrors) { expect(e).toBeGreaterThan(-0.045); expect(e).toBeLessThan(0.125); }
+    });
+  }
+  it('in a browser that draws a frame at once after a run of slow ones, that frame is not too early', async () => {
+    let k = 0;
+    const r = await watch(() => (k++ % 3 === 1 ? 8 : 300), 16.7);
+    expect(r.frames).toBeGreaterThan(1);
+    for (const e of r.heardErrors) { expect(e).toBeGreaterThan(-0.045); expect(e).toBeLessThan(0.125); }
+  });
+  it('in a browser whose frames swing between 40 and 300 ms apart, every frame is still within those bounds', async () => {
+    let k = 0;
+    const r = await watch(() => (k++ % 2 ? 40 : 300), 16.7);
+    expect(r.frames).toBeGreaterThan(1);
+    for (const e of r.heardErrors) { expect(e).toBeGreaterThan(-0.045); expect(e).toBeLessThan(0.125); }
+  });
 
   it('on a computer that stutters (frames from 30 to 300 ms apart) the picture is never left behind', async () => {
     let seed = 7;

@@ -1,9 +1,10 @@
 /**
- * Records the tutor's voice: every letter and every word of the Urdu, Hindi
- * and Arabic courses, said by the system's voices (macOS `say`: Lekha for
- * Hindi and Urdu, Majed for Arabic), into public/audio/tutor.
+ * Records the tutor's voice: every letter and every word of the Urdu, Hindi,
+ * Arabic and English courses, and the words of the course of sounds, said by
+ * the system's voices (macOS `say`: Lekha for Hindi and Urdu, Majed for
+ * Arabic, Samantha for English), into public/audio/tutor.
  *
- *   npx tsx scripts/tutor-voice.ts [text or ipa to match] [--course ur|hi|ar|ipa] [--keep] [--inspect folder]
+ *   npx tsx scripts/tutor-voice.ts [text or ipa to match] [--course ur|hi|ar|en|ipa] [--keep] [--inspect folder] [--dry]
  *
  * The system's voices say a single word very fast, and its long vowels as
  * short as its short ones (آم comes out as "am"). So each recording is
@@ -13,6 +14,23 @@
  * speech. A long vowel is long, a final m is short. Where each sound then
  * starts and stops is known exactly, and written beside the file's name in
  * manifest.json: the mouth of the tutor follows those times.
+ *
+ * Some sounds a voice does not say alone (an English voice reads "i" as
+ * "eye"): they are said in a word, and the recording keeps the sound alone,
+ * cut out of the word where the aligner found it ("it" for the i of "igloo").
+ *
+ * Where the aligner is wrong for one recording, the right cuts, checked by
+ * eye on its spectrogram (--inspect, then scripts/voice-look.py), are written
+ * in scripts/tutor-voice-cuts.json, and used instead. A recording the
+ * script's own check doubts is listed at the end, every time, unless it has
+ * been looked at and found right: then the cuts that were looked at are
+ * written there too, and if the voice or the aligner ever cuts it otherwise,
+ * it is doubted again.
+ *
+ * --inspect writes, for each recording, the voice's raw take (.wav) with its
+ * cuts, and the take as made (.made.wav) with the times written for it.
+ * --dry writes nothing into public/audio/tutor. --prune records nothing: it only takes out of the
+ * manifest, and deletes, the recordings that no course uses any more (after runs of single courses).
  *
  * The files are made from Apple's system voices: check their licence before
  * publishing them.
@@ -26,26 +44,42 @@ import { compactPhones } from '../src/dsp/speech/indic';
 import { buildScore } from '../src/dsp/speech/sequencer';
 import type { Lang } from '../src/dsp/speech/g2p';
 import { PHONEMES } from '../src/dsp/speech/phonemes';
-import { trajectory } from '../src/ui/tutor/motion';
-import { fitTo, HOP, listen, onset } from '../src/ui/tutor/align';
+import type { Score } from '../src/dsp/engine/params';
+import { trajectory, Trajectory } from '../src/ui/tutor/motion';
+import { fitTo, Frames, HOP, listen, planOf, RISE, rise } from '../src/ui/tutor/align';
 import { ALPHABETS } from '../src/ui/tutor/letters';
 import { speechText } from '../src/ui/tutor/speech';
 import { IPA_SECTIONS } from '../src/ui/tutor/ipa';
 import { RECORDED_VOICE } from '../src/ui/tutor/clips';
 
 const FS = 22050;
+/** the rate most computers' audio runs at: a recording is decoded at it to check its times as a browser will see them */
+const PLAY_FS = 48000;
 /** how much slower than the model's own speech the teacher says a word */
 const SLOW = 1.25;
 const OUT = new URL('../public/audio/tutor/', import.meta.url).pathname;
+const CUTS = new URL('./tutor-voice-cuts.json', import.meta.url).pathname;
 const args = process.argv.slice(2);
+const opt = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
 /** --inspect <folder>: also writes each raw recording there, with where its sounds were found */
-const inspect = args.includes('--inspect') ? args[args.indexOf('--inspect') + 1] : null;
-/** --course ur|hi|ar|ipa: only that course's recordings */
-const course = args.includes('--course') ? args[args.indexOf('--course') + 1] : null;
+const inspect = opt('--inspect');
+/** --course ur|hi|ar|en|ipa: only that course's recordings */
+const course = opt('--course');
+const dry = args.includes('--dry');
+const prune = args.includes('--prune');
 const only = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--inspect' && args[i - 1] !== '--course');
 const done = new Set<string>();
 if (inspect) mkdirSync(inspect, { recursive: true });
 const tmp = mkdtempSync(join(tmpdir(), 'tutor-voice-'));
+
+/**
+ * Cuts checked by eye. `cuts`: the times (seconds of the voice's raw take) where each stretch of what it says
+ * starts and stops, used instead of the aligner's; `ok`: the aligner's own cuts were looked at and are right
+ * (a fingerprint of the take and of those cuts: when either changes, they are doubted again); `why`: what was
+ * seen.
+ */
+interface Checked { cuts?: number[]; ok?: string; why: string }
+const checked: Record<string, Checked> = existsSync(CUTS) ? JSON.parse(readFileSync(CUTS, 'utf8')) : {};
 
 /** The samples of a WAV file of 32-bit floats. */
 function readWav(path: string): Float32Array {
@@ -120,29 +154,74 @@ function bend(x: Float32Array, knots: [number, number][], length: number): Float
 }
 
 const isVowel = (s: string) => PHONEMES[s]?.manner === 'vowel';
-const manifest: Record<string, { f: string; k: number[] }> = {};
-if ((only || course) && existsSync(OUT + 'manifest.json')) {
+/** each recording's file, the times of its sounds, and what they are counted from: the instant it first gets loud (align.ts rise) */
+const manifest: Record<string, { f: string; k: number[]; z?: 'rise' | number }> = {};
+if ((only || course || prune) && existsSync(OUT + 'manifest.json')) {
   // one item or one course made again: the others are kept (an old manifest names files only: those are made again in full)
   for (const [k, v] of Object.entries(JSON.parse(readFileSync(OUT + 'manifest.json', 'utf8')) as Record<string, { f: string; k: number[] } | string>)) if (typeof v !== 'string') manifest[k] = v;
 }
 mkdirSync(OUT, { recursive: true });
 let made = 0;
 const odd: string[] = [];
+const fixedByHand: string[] = [];
+const lookedAt: string[] = [];
 
-/** Records one thing the teacher says: `text` read by `voice` at `rate`, whose sounds are `ipa` (compact form). */
-function record(lang: string, voice: string, rate: number, text: string, ipa: string): void {
-  const key = `${voice}|${rate}|${text}`;
-  if (only && !key.includes(only) && ipa !== only) return;
-  if (done.has(key)) return; // the same text for two letters: said once
-  done.add(key);
+/**
+ * Courses may be made at the same time, one run each (--course): a recording two courses share is made by the
+ * run that comes to it first (the others see its lock), and each run writes only its own recordings into the
+ * manifest, as it finds it when it is done.
+ */
+const LOCKS = OUT + '.making/';
+const locked: string[] = [];
+function lock(id: string): boolean {
+  mkdirSync(LOCKS, { recursive: true });
+  try { writeFileSync(LOCKS + id, String(process.pid), { flag: 'wx' }); locked.push(id); return true; } catch { /* taken */ }
+  // (a lock left by a run that is no longer running is taken over)
+  const pid = Number(readFileSync(LOCKS + id, 'utf8'));
+  try { process.kill(pid, 0); return false; } catch { writeFileSync(LOCKS + id, String(process.pid)); locked.push(id); return true; }
+}
+
+/** What the model says for a compact form, as the tutor builds it: one stressed word. */
+function said(lang: string, ipa: string): { score: Score; tr: Trajectory } | null {
   const ps = compactPhones(ipa);
-  if (!ps.length) return;
+  if (!ps.length) return null;
   const vi = ps.findIndex((p) => isVowel(p.ipa));
   if (vi >= 0 && !ps.some((p) => p.stress)) ps[vi].stress = true;
   ps[0].wordStart = true; ps[ps.length - 1].wordEnd = true;
   // (English of any country is timed as English)
   const score = buildScore(ps, { lang: (lang.startsWith('en') ? 'en' : lang) as Lang, f0: 120, ps: 8, rate: 0.9, timeScale: 1 });
-  const tr = trajectory(score);
+  return { score, tr: trajectory(score) };
+}
+
+/** A fingerprint of a raw take and the cuts made in it (to the millisecond). */
+const fingerprint = (x: Float32Array, cuts: number[]): string =>
+  createHash('sha1').update(Buffer.from(x.buffer, x.byteOffset, x.byteLength)).update(cuts.map((c) => c.toFixed(3)).join(',')).digest('hex').slice(0, 16);
+
+/** What an m4a file sounds like decoded at a rate, as a browser decodes it (null: ffmpeg could not). */
+function decoded(file: string, fs: number): Frames | null {
+  try {
+    const raw = execFileSync('ffmpeg', ['-loglevel', 'error', '-i', file, '-f', 'f32le', '-ac', '1', '-ar', String(fs), '-'], { maxBuffer: 64 << 20 });
+    return listen(new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength >> 2), fs);
+  } catch { return null; }
+}
+/** the loudnesses a recording's times may count from (the rise through the first that decoding does not move) */
+const LEVELS = [RISE, 0.7, 0.5, 0.8, 0.65, 0.55, 0.75, 0.85, 0.9];
+
+/**
+ * Records one thing the teacher says: `text` read by `voice` at `rate`, whose sounds are `ipa` (compact form).
+ * `from`: the sounds of what the voice says when that is more than `ipa` (a word `ipa` is cut out of).
+ */
+function record(lang: string, voice: string, rate: number, text: string, ipa: string, from?: string): void {
+  const key = `${voice}|${rate}|${text}`;
+  if (only && !key.includes(only) && ipa !== only) return;
+  if (done.has(key)) return; // the same text for two letters: said once
+  done.add(key);
+  if (prune) return;
+  // (made by a run of another course at the same time: that run writes it)
+  if (!dry && !lock(createHash('sha1').update(key).digest('hex').slice(0, 12))) { console.log(`   ${key}: made by another run`); return; }
+  const own = said(lang, ipa);
+  const whole = from ? said(lang, from) : own;
+  if (!own || !whole) return;
 
   // ---- the voice says it
   const raw = join(tmp, 'raw.wav');
@@ -150,10 +229,39 @@ function record(lang: string, voice: string, rate: number, text: string, ipa: st
   const x = readWav(raw);
   if (x.length < FS * 0.05) { console.log('!! nothing said for', key); return; }
 
-  // ---- where its sounds are, and where they should be
-  const fit = fitTo(listen(x, FS), score.phones, tr);
-  const a = fit.knots.audio, m = fit.knots.model, kinds = fit.knots.kinds;
-  const S = a.length - 1;
+  // ---- where its sounds are
+  const fitRaw = fitTo(listen(x, FS), whole.score.phones, whole.tr);
+  let cuts = fitRaw.knots.audio;
+  const allKinds = fitRaw.knots.kinds;
+  const aligner = fingerprint(x, cuts);
+  const check = checked[key];
+  let byHand = false;
+  if (check?.cuts) {
+    if (check.cuts.length !== cuts.length || check.cuts.some((c, i) => i > 0 && c < check.cuts![i - 1])) {
+      console.log(`!! ${key}: the cuts checked by hand are ${check.cuts.length - 1} stretches, the word has ${cuts.length - 1}: not used`);
+    } else { cuts = check.cuts; byHand = true; fixedByHand.push(key); }
+  }
+  // ---- the part of it that is kept: all of it, or the sound cut out of a word
+  let s0 = 0, s1 = allKinds.length;
+  const mine = planOf(own.score.phones, own.tr);
+  if (from) {
+    // the stretches of the word that belong to the sounds kept: the kept sounds are a run of the word's sounds
+    const wp = whole.score.phones.filter((p) => PHONEMES[p.ipa] && p.ipa !== '_' && p.t1 > p.t0);
+    const op = own.score.phones.filter((p) => PHONEMES[p.ipa] && p.ipa !== '_' && p.t1 > p.t0).map((p) => p.ipa);
+    const at = wp.findIndex((_, i) => op.every((q, j) => wp[i + j]?.ipa === q));
+    if (at < 0) { console.log(`!! ${key}: /${ipa}/ is not in /${from}/`); return; }
+    const t0 = wp[at].t0, t1 = wp[at + op.length - 1].t1;
+    const m = fitRaw.knots.model;
+    const inside = allKinds.map((_, s) => { const mid = (m[s] + m[s + 1]) / 2; return mid >= t0 && mid < t1; });
+    s0 = inside.indexOf(true); s1 = inside.lastIndexOf(true) + 1;
+    const kept = allKinds.slice(s0, s1);
+    if (s0 < 0 || kept.join() !== mine.kinds.join()) { console.log(`!! ${key}: the sounds kept (${kept.join(' ')}) are not those of /${ipa}/ (${mine.kinds.join(' ')})`); return; }
+  }
+  const a = cuts.slice(s0, s1 + 1), kinds = allKinds.slice(s0, s1);
+  const m = mine.model;
+  const S = kinds.length;
+
+  // ---- each sound as long as the model makes it, a little slower
   const lead = 0.03;
   const outT = [lead];
   for (let s = 0; s < S; s++) {
@@ -161,14 +269,16 @@ function record(lang: string, voice: string, rate: number, text: string, ipa: st
     let want = (m[s + 1] - m[s]) * SLOW;
     const kind = kinds[s];
     // (a burst is not stretched: it is over in an instant; hisses and puffs a little; what is held or sung, freely)
-    const [lo, hi] = kind === 'burst' ? [0.9, 1.25] : kind === 'puff' ? [0.7, 1.6] : kind === 'hiss' || kind === 'breath' || kind === 'buzz' ? [0.6, 2.2] : kind === 'hold' || kind === 'silence' ? [0.5, 3] : [0.5, 3.2];
+    const [lo, hi] = kind === 'burst' ? [0.9, 1.25] : kind === 'puff' ? [0.7, 1.6] : kind === 'hiss' || kind === 'breath' || kind === 'buzz' ? [0.6, 3.2] : kind === 'hold' || kind === 'silence' ? [0.5, 3] : [0.5, 3.2];
+    // (a stop that starts the word and was not heard holding, voiced or not, holds in silence: its time is kept)
     if (have > 0) want = Math.max(lo * have, Math.min(hi * have, want));
-    else if (kind !== 'hold' && kind !== 'silence') want = 0;
+    else if (kind !== 'hold' && kind !== 'silence' && !(kind === 'hum' && s === 0)) want = 0;
     outT.push(outT[s] + want);
   }
   const end = outT[S];
-  // the rest of the recording after its last sound (its dying away), as it is
-  const tailIn = Math.min(x.length / FS - a[S], 0.12);
+  // the rest of the recording after its last sound (its dying away), as it is; none after a sound cut out of a word
+  const cutBefore = s0 > 0, cutAfter = s1 < allKinds.length;
+  const tailIn = cutAfter ? 0 : Math.min(x.length / FS - a[S], 0.12);
   const length = Math.round((end + tailIn + 0.04) * FS);
   const knots: [number, number][] = [[0, (a[0] - lead) * FS]];
   for (let s = 0; s <= S; s++) knots.push([outT[s] * FS, a[s] * FS]);
@@ -180,50 +290,77 @@ function record(lang: string, voice: string, rate: number, text: string, ipa: st
     const i0 = Math.round(outT[s] * FS), i1 = Math.round(outT[s + 1] * FS), ramp = Math.round(0.004 * FS);
     for (let i = Math.max(0, i0 - ramp); i < Math.min(length, i1); i++) y[i] *= i < i0 ? (i0 - i) / ramp : i > i1 - ramp ? 1 - (i1 - i) / ramp : 0;
   }
+  // a sound cut out of a word: nothing of the word before or after it, the edges faded in a few milliseconds
+  if (cutBefore || cutAfter) {
+    const inA = (outT[0] - 0.002) * FS, inB = (outT[0] + 0.004) * FS, outA = (end - 0.012) * FS, outB = (end + 0.003) * FS;
+    for (let i = 0; i < length; i++) {
+      if (cutBefore) y[i] *= i <= inA ? 0 : i < inB ? (i - inA) / (inB - inA) : 1;
+      if (cutAfter) y[i] *= i >= outB ? 0 : i > outA ? (outB - i) / (outB - outA) : 1;
+    }
+  }
   // as loud as the others, and no click at its two ends
   let peak = 1e-6;
   for (let i = 0; i < length; i++) peak = Math.max(peak, Math.abs(y[i]));
   const edge = Math.round(0.004 * FS);
   for (let i = 0; i < length; i++) y[i] *= (0.89 / peak) * Math.min(1, i / edge, (length - 1 - i) / edge);
 
-  // ---- the times of its sounds, from the first moment something is heard (found again the same way when it is played)
   const heard = listen(y, FS);
-  const t0 = onset(heard);
-  const marks = outT.map((t) => Math.round((t - t0) * 1000) / 1000);
   // (a check: the sounds found again in what was made should be where they were put)
-  const again = fitTo(heard, score.phones, tr).knots.audio;
-  const worst = Math.max(...again.map((t, i) => (i === 0 || i === S ? 0 : Math.abs(t - outT[i]))));
+  const again = fitTo(heard, own.score.phones, own.tr).knots.audio;
+  const worst = again.length === outT.length ? Math.max(...again.map((t, i) => (i === 0 || i === S ? 0 : Math.abs(t - outT[i])))) : Infinity;
   const factors = a.slice(1).map((v, i) => (v - a[i] > 0 ? (outT[i + 1] - outT[i]) / (v - a[i]) : 0));
   // (a voice that reads a letter by its name, or as a phrase, takes far longer than the letter's sounds do)
-  const other = x.length / FS > 0.34 * score.phones.filter((q) => PHONEMES[q.ipa] && q.ipa !== '_').length + 0.25;
-  const strange = other || worst > 0.06 || factors.some((f, i) => f > 0 && (f < 0.5 || f > 3.3) && kinds[i] !== 'hold');
+  const other = x.length / FS > 0.34 * whole.score.phones.filter((q) => PHONEMES[q.ipa] && q.ipa !== '_').length + 0.25;
+  const flags: string[] = [];
+  if (other) flags.push('long take');
+  if (worst > 0.06) flags.push(`found again ${(1000 * worst).toFixed(0)} ms away`);
+  if (factors.some((f, i) => f > 0 && (f < 0.5 || f > 3.3) && kinds[i] !== 'hold')) flags.push('stretched far');
 
   const file = createHash('sha1').update(key).digest('hex').slice(0, 12) + '.m4a';
   const wav = join(tmp, 'out.wav');
   writeWav(wav, y);
-  execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', wav, '-c:a', 'aac', '-b:a', '72k', '-ar', String(FS), '-ac', '1', OUT + file]);
-  manifest[key] = { f: file, k: marks };
+  const m4a = dry ? join(tmp, file) : OUT + file;
+  execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', wav, '-c:a', 'aac', '-b:a', '72k', '-ar', String(FS), '-ac', '1', m4a]);
+  // ---- the times of its sounds, from the instant it first gets loud: as a browser will decode it, at two rates,
+  // that instant must be where it is here. It is where the recording rises through 18 dB under its loudest, unless
+  // it lingers near that loudness (the puff of a k can, for 50 ms): then through another, where it rises steeply
+  const plays = [PLAY_FS, 44100].map((fs) => decoded(m4a, fs)).filter((f): f is Frames => f !== null);
+  const shiftAt = (level: number) => plays.map((f) => rise(f, level) - rise(heard, level)).reduce((m, d) => (Math.abs(d) > Math.abs(m) ? d : m), 0);
+  const best = LEVELS.reduce((b, l) => (Math.abs(shiftAt(l)) < Math.abs(shiftAt(b)) - 0.002 ? l : b), RISE);
+  const shift = shiftAt(best);
+  const t0 = rise(heard, best);
+  const marks = outT.map((t) => Math.round((t - t0) * 1000) / 1000);
+  if (Math.abs(shift) > 0.005) flags.push(`${(1000 * shift).toFixed(0)} ms off when decoded`);
+  if (!dry) manifest[key] = { f: file, k: marks, z: best === RISE ? 'rise' : best };
   made++;
+  // a doubt that was looked at, with these very cuts, is settled
+  const settled = !!check && (byHand || check.ok === aligner);
+  if (check?.ok && !byHand && check.ok !== aligner) flags.push('its checked cuts have changed');
+  if (flags.length && settled) lookedAt.push(key);
+  const strange = flags.length > 0 && !settled;
   if (inspect) {
-    // the recording as the voice said it, with where its sounds were found: to look at (scripts/voice-look.py)
-    const n = String(made).padStart(3, '0');
+    // the recording as the voice said it, with where its sounds were found, and as it was made, with its times: to look at (scripts/voice-look.py)
+    const n = file.slice(0, 12);
     writeWav(join(inspect, `${n}.wav`), x);
-    writeFileSync(join(inspect, `${n}.json`), JSON.stringify({ lang, text, ipa, strange, cuts: a, kinds, made: outT, phones: score.phones.map((q) => [q.ipa, q.t0, q.t1]) }));
+    writeWav(join(inspect, `${n}.made.wav`), y);
+    writeFileSync(join(inspect, `${n}.json`), JSON.stringify({
+      key, lang, text, ipa, from: from ?? null, strange, flags, byHand, fingerprint: aligner, cuts, kinds: allKinds, keep: [s0, s1],
+      made: outT, onset: t0, level: best, shift, marks, phones: whole.score.phones.map((q) => [q.ipa, q.t0, q.t1]),
+    }));
   }
-  const line = `${other ? '!!' : strange ? '??' : '  '} ${lang} ${text} /${ipa}/ ${(x.length / FS).toFixed(2)}s → ${(length / FS).toFixed(2)}s | ${kinds.map((k, i) => `${k} ${(a[i + 1] - a[i]).toFixed(2)}→${(outT[i + 1] - outT[i]).toFixed(2)}`).join(', ')} | check ${worst.toFixed(3)}`;
+  const line = `${other ? '!!' : strange ? '??' : byHand ? 'hh' : '  '} ${lang} ${text} /${ipa}/${from ? ` (from /${from}/)` : ''} ${(x.length / FS).toFixed(2)}s → ${(length / FS).toFixed(2)}s | ${kinds.map((k, i) => `${k} ${(a[i + 1] - a[i]).toFixed(2)}→${(outT[i + 1] - outT[i]).toFixed(2)}`).join(', ')} | check ${worst.toFixed(3)}${flags.length ? ' | ' + flags.join(', ') : ''}`;
   if (strange) odd.push(line);
   console.log(line);
 }
 
-if (!course || course !== 'ipa') {
-  for (const lang of ['ur', 'hi', 'ar'] as const) {
-    if (course && course !== lang) continue;
-    const A = ALPHABETS[lang];
-    const via = lang === 'ur' ? 'hi' : lang;
-    for (const l of A.letters) {
-      const say = l.say ?? (l.sound === 'ã' || isVowel(l.sound) ? l.sound : l.sound + A.vowel);
-      for (const [what, rate, ipa] of [['sound', 0.75, say], ['word', 0.82, l.word.ipa]] as const) record(lang, RECORDED_VOICE[lang], rate, speechText(l, lang, via, what, say), ipa);
-    }
+for (const lang of ['ur', 'hi', 'ar', 'en'] as const) {
+  if (course && course !== lang) continue;
+  const A = ALPHABETS[lang];
+  const via = lang === 'ur' ? 'hi' : lang;
+  for (const l of A.letters) {
+    const say = l.say ?? (l.sound === 'ã' || isVowel(l.sound) ? l.sound : l.sound + A.vowel);
+    record(lang, RECORDED_VOICE[lang], 0.75, speechText(l, lang, via, 'sound', say), say, l.read?.from);
+    record(lang, RECORDED_VOICE[lang], 0.82, speechText(l, lang, via, 'word', say), l.word.ipa);
   }
 }
 
@@ -239,12 +376,23 @@ if (!course || course === 'ipa') {
   }
 }
 
-// files no longer named are removed
-if (!only && !process.argv.includes('--keep')) {
+// files no longer named are removed (by a run of everything: a run of one course may run beside others)
+if (prune) {
+  // what no course says any more goes
+  for (const k of Object.keys(manifest)) if (!done.has(k)) { console.log('  no longer used:', k); delete manifest[k]; }
+}
+if (!only && !course && !dry && !process.argv.includes('--keep')) {
   const named = new Set(Object.values(manifest).map((v) => v.f));
   for (const f of readdirSync(OUT)) if (f.endsWith('.m4a') && !named.has(f)) rmSync(OUT + f);
 }
-writeFileSync(OUT + 'manifest.json', JSON.stringify(manifest, null, 0).replace(/},"/g, '},\n"') + '\n');
+if (!dry) {
+  // (a run of one course writes its own recordings over the manifest as it is now: other runs may have written theirs meanwhile)
+  const now: Record<string, { f: string; k: number[]; z?: 'rise' | number }> = (only || course) && existsSync(OUT + 'manifest.json') ? JSON.parse(readFileSync(OUT + 'manifest.json', 'utf8')) : {};
+  for (const k of done) if (manifest[k] && locked.includes(manifest[k].f.slice(0, 12))) now[k] = manifest[k];
+  writeFileSync(OUT + 'manifest.json', JSON.stringify(only || course ? now : manifest, null, 0).replace(/},"/g, '},\n"') + '\n');
+  for (const id of locked) rmSync(LOCKS + id, { force: true });
+  if (existsSync(LOCKS) && !readdirSync(LOCKS).length) rmSync(LOCKS, { recursive: true, force: true });
+}
 rmSync(tmp, { recursive: true, force: true });
-console.log(`${made} recordings made, ${odd.length} to listen to with care (HOP ${HOP}s)`);
+console.log(`${made} recordings made${dry ? ' (dry: none written)' : ''}; ${fixedByHand.length} cut by hand, ${lookedAt.length} doubted but checked by eye, ${odd.length} doubted and not yet checked (HOP ${HOP}s)`);
 for (const l of odd) console.log(l);

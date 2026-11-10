@@ -12,10 +12,10 @@ import { voice } from './voice/voice';
 import type { StreamBlock } from './voice/sink';
 
 export type Lang = 'it' | 'en';
-/** learn: guided chapters; play: a few big controls; lab: everything, organised by the signal chain; tutor: the letters of Urdu, Arabic and Hindi */
+/** learn: guided chapters; play: a few big controls; lab: everything, organised by the signal chain; tutor: the letters of Urdu, Arabic, Hindi and English */
 export type Mode = 'learn' | 'play' | 'lab' | 'tutor';
 /** the languages the letter tutor teaches */
-export type TutorLang = 'ur' | 'ar' | 'hi';
+export type TutorLang = 'ur' | 'ar' | 'hi' | 'en';
 /** what the letter tutor has open: one of those alphabets, or the whole International Phonetic Alphabet */
 export type TutorCourse = TutorLang | 'ipa';
 /** playback speeds of the tutor: real time, half, a quarter */
@@ -128,12 +128,12 @@ function initialTutor(): UiState['tutor'] {
   const t: UiState['tutor'] = { lang: 'ur', letter: 0, speed: 0.5 };
   try {
     const r = JSON.parse(remembered(TUTOR_KEY) ?? 'null') as Partial<UiState['tutor']> | null;
-    if (r?.lang === 'ur' || r?.lang === 'ar' || r?.lang === 'hi' || r?.lang === 'ipa') t.lang = r.lang;
+    if (r?.lang === 'ur' || r?.lang === 'ar' || r?.lang === 'hi' || r?.lang === 'en' || r?.lang === 'ipa') t.lang = r.lang;
     if (Number.isInteger(r?.letter) && (r!.letter as number) >= 0) t.letter = r!.letter as number;
     if (r?.speed === 1 || r?.speed === 0.5 || r?.speed === 0.25) t.speed = r.speed;
   } catch { /* not remembered */ }
   const q = query('tutor');
-  if (q === 'ur' || q === 'ar' || q === 'hi' || q === 'ipa') { t.lang = q; t.letter = 0; }
+  if (q === 'ur' || q === 'ar' || q === 'hi' || q === 'en' || q === 'ipa') { t.lang = q; t.letter = 0; }
   return t;
 }
 function initialPlay(): PlayActivity {

@@ -1,6 +1,6 @@
 /**
- * What the tutor teaches, in one shape: the alphabets of Urdu, Arabic and
- * Hindi (letters.ts) and the whole International Phonetic Alphabet (ipa.ts),
+ * What the tutor teaches, in one shape: the alphabets of Urdu, Arabic, Hindi
+ * and English (letters.ts) and the whole International Phonetic Alphabet (ipa.ts),
  * each as a course of sections of entries. An entry is a letter or a sound
  * with everything the lesson needs: the model symbol that shows it, how to
  * say it alone, a word that has it, and for the IPA real words from several
@@ -64,6 +64,18 @@ function alphabetSections(lang: TutorLang): Section[] {
     ];
   }
   if (lang === 'ar') return [cut('Letters', 'letters', (e) => !mark(e)), cut('Vowel marks', 'marks', mark, 'Small marks above or below a letter: the short vowels.')];
+  if (lang === 'en') {
+    const letter = (e: Entry) => /^[A-Z][a-z]$/.test(e.glyph);
+    const pair = (e: Entry) => /^(sh|ch|th|ng|ph|wh)$/.test(e.glyph);
+    const long = (e: Entry) => /^(a_e|ee|i_e|o_e|u_e)$/.test(e.glyph);
+    const vowel = (e: Entry) => !letter(e) && !pair(e) && !long(e);
+    return [
+      cut('Letters', 'letters', letter, 'Each letter and the sound it most often makes.'),
+      cut('Two letters, one sound', 'pairs', pair, 'Two letters side by side that make one new sound.'),
+      cut('Long vowels', 'long', long, 'A vowel that says its own name: with a magic e at the end, or two vowels together.'),
+      cut('More vowel sounds', 'vowels', vowel, 'Vowels with an r, two vowels that glide, and the lazy schwa.'),
+    ];
+  }
   const nukta = (e: Entry) => e.glyph.normalize('NFD').includes('\u093C');
   const firstConsonant = all.findIndex((e) => e.glyph === 'क');
   return [
@@ -100,9 +112,10 @@ export const COURSES: Record<CourseId, Course> = {
   ur: course('ur'),
   ar: course('ar'),
   hi: course('hi'),
+  en: course('en'),
   ipa: { id: 'ipa', name: 'IPA', native: 'aɪ pʰiː eɪ', dir: 'ltr', vowel: 'a', sections: ipaSections, entries: ipaSections.flatMap((s) => s.entries), marks: chart?.IPA_MARKS ?? [] },
 };
-export const COURSE_IDS: CourseId[] = ipaSections.length ? ['ur', 'ar', 'hi', 'ipa'] : ['ur', 'ar', 'hi'];
+export const COURSE_IDS: CourseId[] = ipaSections.length ? ['ur', 'ar', 'hi', 'en', 'ipa'] : ['ur', 'ar', 'hi', 'en'];
 
 /** What an entry says on its own: a vowel as it is, a consonant with the course's vowel. */
 export function sayOf(e: Entry, c: Course): string {

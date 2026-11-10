@@ -137,6 +137,13 @@ export const GUIDE: Record<string, SoundGuide> = {
   'ɞ': V('Half open, middle, lips round', 'Half open and round.', 'In the middle of your mouth, fairly low.', 'the vowel of "bird" said with round lips', 'lips'),
   'ɐ': V('Open and relaxed', 'Open, relaxed.', 'Low, in the middle of your mouth, doing nothing.', 'the er of German "Vater"; the last a of Portuguese "casa"'),
   'ɒ': V('Open wide, a little round', 'Open wide, and make your lips a little round.', 'Low and pulled back.', 'the o of British "hot"', 'lips'),
+  // the gliding vowels of English (a vowel that moves to another as it is said) and its r-coloured vowel
+  'eɪ': V('Half smile, then smile more', 'A half smile, then a bigger one as the sound ends.', 'Forward and half way up, then gliding up toward "ee".', 'the a in "cake"', 'tongue'),
+  'aɪ': V('Open wide, then smile', 'Open wide, then close into a smile.', 'Low, then gliding up and forward toward "ee".', 'the i in "bike"'),
+  'oʊ': V('Round, then rounder', 'Round like an O, then a smaller round hole.', 'Pulled back, half way up, then a little higher.', 'the o in "bone"', 'lips'),
+  'aʊ': V('Open wide, then round', 'Open wide, then close into a small round hole: like saying "ow!" when you are hurt.', 'Low, then gliding up and back toward "oo".', 'the ow in "cow"'),
+  'ɔɪ': V('Round, then smile', 'Round and open, then into a smile.', 'Pulled back, then gliding forward and up toward "ee".', 'the oy in "boy"', 'lips'),
+  'ɝ': V('Tongue up and back, lips a little round', 'A little round, pushed forward.', 'Bunch the tongue up and back, the tip lifted, touching nothing: the sound of a growl.', 'the er in "her", the ir in "bird"', 'tongue'),
   // ------------------------------------------------------------------ lips
   'ɱ': { place: 'lips', handle: 'lips', hint: 'Teeth on the lip, hum', lips: 'Put your top teeth gently on your lower lip, as for f, and keep them there.', tongue: REST, air: NOSE, voice: ON, trick: 'Say "comfort" slowly: the m just before the f is this sound.', like: 'the m in "symphony"' },
   'ʙ': { place: 'lips', handle: 'lips', hint: 'Lips loose, blow: brrr', lips: 'Close your lips loosely and blow, so that they flap against each other.', tongue: REST, air: 'Blow steadily: the air makes the lips flutter.', voice: ON, trick: 'It is the "brrr" you say when you are cold.', like: '"brrr"' },
@@ -203,6 +210,8 @@ export const GUIDE: Record<string, SoundGuide> = {
 // the IPA letter ɡ is the same sound as the g of the keyboard; ç is one
 // character or two (c and a combining cedilla) depending on how it was typed
 GUIDE['ɡ'] = GUIDE.g;
+// the unstressed r-coloured vowel of "butter" is made as the stressed one of "her"
+GUIDE['ɚ'] = { ...GUIDE['ɝ'], like: 'the er in "butter"' };
 GUIDE['ç'] = GUIDE['ç'];
 
 const PUFF = ' Then let out a big puff of air, like blowing out a candle. Hold your hand in front of your mouth: you should feel it!';

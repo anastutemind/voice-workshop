@@ -232,4 +232,30 @@ describe('the voice controller', () => {
     expect(v.manual.phonate).toBe(false);
     expect(v.held.phoneme).toBe('u');
   });
+
+  it('the time of a sentence heard is read from the audio, however late a busy page hands on the engine\'s reports', async () => {
+    // the audio's clock: the engine's time of the sound heard at this instant
+    let heard: number | null = null;
+    (sink as FakeSink & { heardTime: () => number | null }).heardTime = () => heard;
+    void v.speak(sentence(), L);
+    await settle();
+    const id = sink.programs()[0].id;
+    // nothing reported on this sentence yet: its time is only the wall clock's, and says so
+    clock.advance(40);
+    expect(v.progress()).toMatchObject({ heard: false });
+    // a report: the score was at 0.10 s when the engine was at 5.10 s; what is heard is 20 ms behind it
+    const t = new VoiceEngine(48000, defaultParams()).telemetry();
+    sink.onTelemetry({ ...t, time: 5.1, scoreTime: 0.1 }, id);
+    heard = 5.08;
+    expect(v.progress()!.heard).toBe(true);
+    expect(v.progress()!.t).toBeCloseTo(0.08, 6);
+    // the page is busy: no report for 450 ms, while the sound goes on. The time still follows the sound (the wall
+    // clock since the sentence was asked for would say 0.49, and the old reading stopped 0.3 s past the report)
+    clock.advance(450);
+    heard = 5.53;
+    expect(v.progress()!.t).toBeCloseTo(0.53, 6);
+    // a reading of the audio that cannot be (far ahead of what the report's age allows) is not believed
+    heard = 9.9;
+    expect(v.progress()!.t).toBeLessThan(0.1 + 0.45 + 0.3 + 1e-6);
+  });
 });

@@ -4,9 +4,11 @@
  * must follow the recording, sound by sound. The sounds of the word are
  * known (the model says the same ones, in the same order); what is not
  * known is when each one starts in the recording. So each is looked for
- * there by what it sounds like: a vowel is loud and full, a nasal (m, n) a
- * hum with nothing above it, a hiss (s, sh, f) is high and has no hum, the
- * closure of a stop is silent or nearly, and it lets go in a burst. The
+ * there by what it sounds like: a vowel is loud and full, and voiced, a
+ * nasal (m, n) a hum with nothing above it, a hiss (s, sh, f) is high and
+ * has no hum, the closure of a stop is silent or nearly, and it lets go in a
+ * burst, at the end of a word often 55 dB under the vowel, or into a puff of
+ * air that is not a voice. The
  * recording is cut into as many stretches as the word has sounds, the cut
  * that fits those descriptions best while keeping each sound near the share
  * of the word the model gives it. The time of the picture is then the
@@ -52,6 +54,39 @@ export interface Frames {
   mid: Float32Array;
   /** the share above 3500 Hz, on the same scale: hiss */
   high: Float32Array;
+  /** the level in decibels under the loudest moment, not cut off at 45: the faint release of a final stop is 55 under it */
+  db?: Float32Array;
+  /** how much the sound repeats itself at a pitch of a voice (80 to 400 Hz), 0 (noise: a puff of air, a hiss) to 1 (a voice): the air after a t sounds like an i above 3500 Hz, never at its pitch */
+  voice?: Float32Array;
+}
+
+/**
+ * How voiced each moment is: the sound under 1000 Hz, taken down to a quarter of the rate or less, is set
+ * against itself a period of a voice later (80 to 400 Hz); the best match, 0 to 1.
+ */
+function voicing(all: Float32Array, fs: number, n: number, hop: number): Float32Array {
+  const lp = biquad(biquad(biquad(all, fs, 'lp', 900), fs, 'lp', 900), fs, 'lp', 900);
+  const step = Math.max(1, Math.floor(fs / 4000)), r = fs / step;
+  const y = new Float32Array(Math.floor(lp.length / step));
+  for (let i = 0; i < y.length; i++) y[i] = lp[i * step];
+  const lo = Math.floor(r / 400), hi = Math.ceil(r / 80), half = Math.round(r * 0.0175);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const c = Math.round((i * hop) / step), a = c - half, b = c + half;
+    if (a < 0 || b + hi >= y.length) continue;
+    let e0 = 0;
+    for (let j = a; j < b; j++) e0 += y[j] * y[j];
+    if (!(e0 > 0)) continue;
+    let best = 0;
+    for (let lag = lo; lag <= hi; lag++) {
+      let xy = 0, e1 = 0;
+      for (let j = a; j < b; j++) { xy += y[j] * y[j + lag]; e1 += y[j + lag] * y[j + lag]; }
+      const v = xy / Math.sqrt(e0 * e1 + 1e-30);
+      if (v > best) best = v;
+    }
+    out[i] = best;
+  }
+  return out;
 }
 
 const share = (part: number, all: number, peak: number): number => clamp01((10 * Math.log10(part / (all + peak * 1e-5) + 1e-6) + 30) / 30);
@@ -81,8 +116,9 @@ export function listen(x: ArrayLike<number>, fs: number): Frames {
   const pa = power(all), pm = power(mid), pl = power(lowMid), ph = power(high);
   let peak = 1e-12;
   for (let i = 0; i < n; i++) if (pa[i] > peak) peak = pa[i];
-  const f: Frames = { n, loud: new Float32Array(n), mid: new Float32Array(n), high: new Float32Array(n) };
+  const f: Frames = { n, loud: new Float32Array(n), mid: new Float32Array(n), high: new Float32Array(n), db: new Float32Array(n), voice: voicing(all, fs, n, hop) };
   for (let i = 0; i < n; i++) {
+    f.db![i] = 10 * Math.log10(pa[i] / peak + 1e-12);
     f.loud[i] = clamp01((10 * Math.log10(pa[i] / peak + 1e-9) + 45) / 45);
     // (shares on a scale of decibels: a thousandth of the sound is 0, all of it 1; an ear hears a ring thirty times weaker than the hum under it)
     f.mid[i] = Math.max(share(pm[i], pa[i], peak), share(pl[i], pa[i], peak));
@@ -93,13 +129,18 @@ export function listen(x: ArrayLike<number>, fs: number): Frames {
 
 // ------------------------------------------------------------ what a sound is like
 
-/** What a kind of sound is like: how loud, how much ring, how much hiss (each a span it stays in), how much each counts, and how long it may last at most (seconds). */
-interface Kind { loud: [number, number]; mid: [number, number]; high: [number, number]; w: [number, number, number]; most?: number }
+/**
+ * What a kind of sound is like: how loud, how much ring, how much hiss, and (for some) how voiced (each a span
+ * it stays in), how much each counts, and how long it may last at most (seconds).
+ */
+interface Kind { loud: [number, number]; mid: [number, number]; high: [number, number]; voice?: [number, number]; w: [number, number, number, number?]; most?: number }
 const ANY: [number, number] = [0, 1];
 const KIND = {
   silence: { loud: [0, 0.1], mid: ANY, high: ANY, w: [3, 0, 0] },
   open: { loud: [0.85, 1], mid: [0.5, 1], high: [0, 0.5], w: [2, 3, 1.5] },         // a e o: the mouth open, the sound full
-  close: { loud: [0.8, 1], mid: [0.48, 1], high: [0, 0.5], w: [2, 3, 1.5] },        // i u: loud, most of it low
+  // (an i or a u at the end of a word, said softly, rings little: most of it is under 450 Hz. It is still a
+  // voice, which the air after a stop is not: the ī of hāthī is told from the puff before it by that)
+  close: { loud: [0.8, 1], mid: [0.3, 1], high: [0, 0.5], w: [2, 2.5, 1.5] },       // i u: loud, most of it low
   glide: { loud: [0.7, 1], mid: [0.4, 1], high: [0, 0.55], w: [1.5, 1, 1.5] },      // l r y w
   // (measured on the voices: the ring of a vowel is 0.5 to 0.95 of the sound on this scale, an m's or an n's 0 to 0.42)
   nasal: { loud: [0.6, 1], mid: [0, 0.42], high: [0, 0.3], w: [2, 3, 1] },          // a hum, nothing above it
@@ -108,18 +149,31 @@ const KIND = {
   buzz: { loud: [0.4, 0.95], mid: [0, 0.4], high: ANY, w: [1.2, 1.5, 0] },          // z zh v: a hum, then a hiss on it
   hold: { loud: [0, 0.2], mid: ANY, high: ANY, w: [3, 0, 0] },                      // a stop holding, no voice
   hum: { loud: [0.2, 0.95], mid: [0, 0.25], high: [0, 0.3], w: [2, 3, 1] },         // a stop holding, the voice going on
+  // (a b, d or g that starts a word: the voice may hum through the closure, or start only when it lets go, the
+  // closure then silent before the first thing heard, as in "behind")
+  humFirst: { loud: [0, 0.95], mid: [0, 0.25], high: [0, 0.3], w: [2, 3, 1] },
   burst: { loud: [0.3, 1], mid: ANY, high: ANY, w: [0.8, 0, 0], most: 0.05 },       // a stop letting go
-  puff: { loud: [0.3, 0.85], mid: ANY, high: [0.4, 1], w: [1.2, 0, 1], most: 0.16 },// the air after it
+  puff: { loud: [0.3, 0.85], mid: ANY, high: [0.4, 1], voice: [0, 0.75], w: [1.2, 0, 1, 2.5], most: 0.16 }, // the air after it: a hiss, not a voice
 } satisfies Record<string, Kind>;
 
 /** how far a value lies outside a span */
 const off = (v: number, [lo, hi]: [number, number]): number => (v < lo ? lo - v : v > hi ? v - hi : 0);
 const cost = (k: Kind, f: Frames, i: number): number =>
-  k.w[0] * off(f.loud[i], k.loud) + k.w[1] * off(f.mid[i], k.mid) + k.w[2] * off(f.high[i], k.high);
+  k.w[0] * off(f.loud[i], k.loud) + k.w[1] * off(f.mid[i], k.mid) + k.w[2] * off(f.high[i], k.high) + (k.voice && f.voice ? (k.w[3] ?? 0) * off(f.voice[i], k.voice) : 0);
 
 /** A stretch of the word: a sound, or a part of one (a stop holds, then lets go). */
-interface Stretch { kind: Kind; /** in the model's time */ m0: number; m1: number; /** it may be left out of the recording altogether */ free?: boolean; /** when the model's mouth is really closed for it (a stop, a nasal), if it closes */ shut?: [number, number] | null }
-const nameOf = (k: Kind): string => (Object.keys(KIND) as (keyof typeof KIND)[]).find((n) => KIND[n] === k) ?? '';
+interface Stretch {
+  kind: Kind;
+  /** in the model's time */
+  m0: number; m1: number;
+  /** it may be left out of the recording altogether */
+  free?: boolean;
+  /** when the model's mouth is really closed for it (a stop, a nasal), if it closes */
+  shut?: [number, number] | null;
+  /** the longest it may last, seconds, when not its kind's */
+  most?: number;
+}
+const nameOf = (k: Kind): string => (k === KIND.humFirst ? 'hum' : (Object.keys(KIND) as (keyof typeof KIND)[]).find((n) => KIND[n] === k) ?? '');
 
 const SIBILANT = /^(s|z|ʃ|ʒ|ʂ|ʐ|tʃ|dʒ|ts|dz)/;
 
@@ -174,7 +228,9 @@ function stretches(phones: ScorePhone[], tr: Trajectory): Stretch[] {
     else if (m === 'vowel') one(/^[iɪuʊyɯ]/.test(p.ipa) ? KIND.close : KIND.open);
     else if (m === 'nasal') out.push({ kind: KIND.nasal, m0: p.t0, m1: p.t1, shut: closure(tr, p.t0, p.t1) });
     else if (m === 'approximant' || m === 'lateral' || m === 'trill' || m === 'tap') one(KIND.glide);
-    else if (m === 'fricative' || m === 'glottal') one(SIBILANT.test(p.ipa) ? (ph.voiced ? KIND.buzz : KIND.hiss) : ph.voiced ? KIND.buzz : KIND.breath);
+    // (an h is a breath, with the voice on or not: the ɦ of "behind" is a breathy vowel, nothing like a z)
+    else if (m === 'glottal') one(KIND.breath);
+    else if (m === 'fricative') one(SIBILANT.test(p.ipa) ? (ph.voiced ? KIND.buzz : KIND.hiss) : ph.voiced ? KIND.buzz : KIND.breath);
     // (a glottal stop is silent; at the start of a word it may take no time at all)
     else if (m === 'glottalStop') out.push({ kind: KIND.hold, m0: p.t0, m1: p.t1, free: !out.length });
     else {
@@ -184,10 +240,14 @@ function stretches(phones: ScorePhone[], tr: Trajectory): Stretch[] {
       const shut = closure(tr, p.t0, p.t1);
       const open = Math.max(p.t0 + 0.25 * (p.t1 - p.t0), Math.min(p.t1 - 0.012, (shut ? shut[1] : letGo(tr, p.t0, p.t1)) ?? p.t0 + share * (p.t1 - p.t0)));
       // (a voiceless one that starts the word holds in the silence before the first thing heard: it may be missing)
-      out.push({ kind: ph.voiced ? KIND.hum : KIND.hold, m0: p.t0, m1: open, free: !ph.voiced && !out.length, shut });
+      out.push({ kind: ph.voiced ? (out.length ? KIND.hum : KIND.humFirst) : KIND.hold, m0: p.t0, m1: open, free: !out.length, shut });
       one(m === 'affricate' ? (ph.voiced ? KIND.buzz : KIND.hiss) : puffed ? KIND.puff : KIND.burst, open, p.t1);
     }
   }
+  // (a stop that ends a word lets go into the silence after it, often with a breath: the t of "rāt" sounds for a
+  // tenth of a second after it opens. Inside a word the next sound cuts it short)
+  const last = out[out.length - 1], before = out[out.length - 2];
+  if (last && before && last.kind === KIND.burst && (before.kind === KIND.hold || before.kind === KIND.hum)) last.most = 0.1;
   return out;
 }
 
@@ -212,16 +272,41 @@ function cut(heard: Frames, st: Stretch[]): number[] {
   while (a < J && f.loud[a] < HEARD) a++;
   while (b > a && f.loud[b - 1] < HEARD) b--;
   if (b - a < 2 * S) { a = 0; b = J; }
-  // A word that ends on a stop without voice (dhūp, ek) ends when the stop lets go: after a silence, and often
-  // so faintly that it is quieter than what counts as heard. The word reaches to there, not to where the voice
-  // stopped: the lips of the picture stay shut through that silence, as the speaker's do.
-  if (S > 1 && st[S - 2].kind === KIND.hold && (st[S - 1].kind === KIND.burst || st[S - 1].kind === KIND.puff)) {
+  // A word that ends on a stop (dhūp, ek, "mermaid") ends when the stop lets go: after a silence, or a hum that
+  // dies away, and often so faintly that it is quieter than what counts as heard. The word reaches to there, not
+  // to where the voice stopped: the lips of the picture stay shut through that silence, as the speaker's do.
+  const finalStop = S > 1 && (st[S - 1].kind === KIND.burst || st[S - 1].kind === KIND.puff) && (st[S - 2].kind === KIND.hold || st[S - 2].kind === KIND.hum);
+  if (finalStop) {
     const far = Math.min(J, b + Math.round(0.3 / HOP));
     for (let j = b; j < far; j++) if (f.loud[j] >= FAINT) b = j + 1;
   }
+  // Fainter still: a voice may let a final stop go 55 dB under its loudest moment (the p of "ship"), after the
+  // voice has died away in the closure, voiced (a final b, d, g) or not. That release is a click out of the
+  // silence: ten decibels over the quiet before it. The word reaches to its end.
+  if (finalStop && f.db) {
+    const db = f.db, far = Math.min(J, b + Math.round(0.3 / HOP));
+    let floor = Infinity, at = -1;
+    for (let j = b; j < far && at < 0; j++) {
+      floor = Math.min(floor, db[j]);
+      if (j - b >= 2 && db[j] >= Math.max(-66, floor + 10)) at = j;
+    }
+    if (at >= 0) {
+      let top = -Infinity;
+      for (let j = at; j < Math.min(far, at + 12); j++) top = Math.max(top, db[j]);
+      let e = at;
+      while (e + 1 < Math.min(far, at + Math.round(0.08 / HOP)) && db[e + 1] >= top - 15) e++;
+      b = Math.max(b, e + 1);
+    }
+  }
+  // A hiss or a breath (f, th, s, h) at the start or the end of a word is often quieter than what counts as heard:
+  // the f of "fākhta" starts 35 dB under the vowel. The word reaches as far as it goes on, faintly.
+  const hissing = (k: Kind) => k === KIND.hiss || k === KIND.breath || k === KIND.buzz;
+  let early = 0;
+  if (hissing(st[0].kind)) while (early < Math.round(0.15 / HOP) && a - early - 1 >= 0 && f.loud[a - early - 1] >= FAINT) early++;
+  if (hissing(st[S - 1].kind)) { const far = Math.min(J, b + Math.round(0.2 / HOP)); while (b < far && f.loud[b] >= FAINT) b++; }
   // a stop that holds without voice is silent: at the start of a word it lies before the first thing heard,
   // so the cut may start a little earlier there
-  const lead = st[0].kind === KIND.hold ? Math.min(a, Math.round(0.12 / HOP)) : 0;
+  const lead = st[0].kind === KIND.hold || st[0].kind === KIND.humFirst ? Math.min(a, Math.round(0.12 / HOP)) : early;
   const j0 = a - lead, n = b - j0;
   const span = st[S - 1].m1 - st[0].m0;
   // the cost of each stretch over the first i moments
@@ -247,7 +332,8 @@ function cut(heard: Frames, st: Stretch[]): number[] {
     const D = new Float32Array(n + 1).fill(INF), B = new Int32Array(n + 1).fill(-1);
     // no stretch shorter than three hundredths of a second (unless it may be left out), nor than a quarter of its share
     const least = st[s].free ? 0 : Math.max(Math.round(0.03 / HOP), Math.floor(want[s] * 0.25));
-    const most = Math.max(least, Math.round((st[s].kind as Kind).most !== undefined ? (st[s].kind as Kind).most! / HOP : n));
+    const longest = st[s].most ?? (st[s].kind as Kind).most;
+    const most = Math.max(least, Math.round(longest !== undefined ? longest / HOP : n));
     // (a stretch that keeps its share of the word costs nothing more; a longer or a shorter one does)
     if (s === 0) {
       // the first stretch starts at the start: every end of it is a candidate
@@ -301,13 +387,61 @@ export function onset(f: Frames): number {
   return (a < f.n ? a : 0) * HOP;
 }
 
+/** how loud (0..1, 18 dB under the loudest moment) a recording first gets at the instant its times are counted from */
+export const RISE = 0.6;
+/**
+ * The instant a recording first gets loud, seconds: where it rises through 18 dB under its loudest moment,
+ * between two looks at it. The first moment something is heard at all moves with the way the recording is
+ * coded and decoded (a faint th at the start of a word fades in over tens of milliseconds, and is heard from a
+ * little earlier or later); this rise is steep (the start of a vowel, a hum, a hiss), and stays where it is.
+ * The times of a recording's sounds are counted from it.
+ */
+export function rise(f: Frames, level = RISE): number {
+  let i = 0;
+  while (i < f.n && f.loud[i] < level) i++;
+  if (i >= f.n) return onset(f);
+  if (i === 0) return 0;
+  const a = f.loud[i - 1], b = f.loud[i];
+  return (i - 1 + (level - a) / Math.max(1e-6, b - a)) * HOP;
+}
+
+/**
+ * The stretches of a word as the model says it: what kind of sound each is, and where each starts and stops
+ * in the model's movement (the last one where the word ends). Where the mouth of the model closes for a stop
+ * or a nasal, the times are those of the closing, not of the plan.
+ */
+export function planOf(phones: ScorePhone[], tr: Trajectory): { kinds: string[]; model: number[] } {
+  const st = stretches(phones, tr);
+  return { kinds: st.map((s) => nameOf(s.kind)), model: modelKnots(st) };
+}
+
+function modelKnots(st: Stretch[]): number[] {
+  const S = st.length;
+  if (!S) return [];
+  const model = [st[0].m0, ...st.map((s) => s.m1)];
+  // The plan says when each sound is due; the mouth of the model closes for a stop or a nasal a little before
+  // or after that, and may open before a nasal is over. What is heard closing in the recording is set against
+  // the mouth closing, not against the plan: the instant the lips meet is the instant the sound says they do.
+  // (Between two sounds made with the mouth closed, n and d, nothing closes: the plan stands there.)
+  const shuts = (s: Stretch | undefined) => !!s && (s.kind === KIND.hold || s.kind === KIND.hum || s.kind === KIND.humFirst || s.kind === KIND.nasal);
+  for (let i = 0; i < S; i++) {
+    const sh = st[i].shut;
+    if (!sh) continue;
+    if (i > 0 && !shuts(st[i - 1])) model[i] = Math.max(model[i - 1] + 0.01, Math.min(model[i + 1] - 0.01, sh[0]));
+    if (st[i].kind === KIND.nasal && i + 1 < S && !shuts(st[i + 1])) model[i + 1] = Math.max(model[i] + 0.01, Math.min(model[i + 2] - 0.01, sh[1]));
+  }
+  return model;
+}
+
 /**
  * The fit of a word's sounds to a recording of it. `marks`, when the
  * recording was made with them (scripts/tutor-voice.ts), say where each
- * stretch of the word is, from the first moment something is heard: nothing
- * is then left to find. Without them the sounds are looked for.
+ * stretch of the word is, counted from the instant the recording first gets
+ * loud (`from: 'rise'`; in recordings made before, from the first moment
+ * something is heard): nothing is then left to find. Without them the
+ * sounds are looked for.
  */
-export function fitTo(f: Frames, phones: ScorePhone[], tr: Trajectory, marks?: number[]): Fit {
+export function fitTo(f: Frames, phones: ScorePhone[], tr: Trajectory, marks?: number[], from: 'rise' | 'onset' | number = 'rise'): Fit {
   const st = stretches(phones, tr);
   if (!st.length) {
     // nothing known of the word: the movement in the time the recording takes
@@ -317,24 +451,14 @@ export function fitTo(f: Frames, phones: ScorePhone[], tr: Trajectory, marks?: n
     return { at: (x) => clamp01((x - t0) / (t1 - t0)) * tr.speech, end: t1, knots: { audio: [t0, t1], model: [0, tr.speech], kinds: [''] }, marked: false };
   }
   const S = st.length;
-  const from = onset(f);
+  // (a number: the recording rises through that loudness steeply, where 0.6 is a plateau, as the puff of a k can be)
+  const zero = from === 'onset' ? onset(f) : rise(f, from === 'rise' ? RISE : from);
   // (one recording may serve two letters that a voice says alike: hamza's ʔa and alif's a are both "आ". Its
   // marks then lack the silent hold the glottal stop starts with: it takes no time in the recording)
   // (and the other way round: أَ recorded for hamza serves the short a, whose word has no glottal stop before it)
   const own = !marks ? marks : marks.length === S && st[0].free ? [marks[0], ...marks] : marks.length === S + 2 ? marks.slice(1) : marks;
-  const audio = own && own.length === S + 1 ? own.map((t) => from + t) : cut(f, st);
-  const model = [st[0].m0, ...st.map((s) => s.m1)];
-  // The plan says when each sound is due; the mouth of the model closes for a stop or a nasal a little before
-  // or after that, and may open before a nasal is over. What is heard closing in the recording is set against
-  // the mouth closing, not against the plan: the instant the lips meet is the instant the sound says they do.
-  // (Between two sounds made with the mouth closed, n and d, nothing closes: the plan stands there.)
-  const shuts = (s: Stretch | undefined) => !!s && (s.kind === KIND.hold || s.kind === KIND.hum || s.kind === KIND.nasal);
-  for (let i = 0; i < S; i++) {
-    const sh = st[i].shut;
-    if (!sh) continue;
-    if (i > 0 && !shuts(st[i - 1])) model[i] = Math.max(model[i - 1] + 0.01, Math.min(model[i + 1] - 0.01, sh[0]));
-    if (st[i].kind === KIND.nasal && i + 1 < S && !shuts(st[i + 1])) model[i + 1] = Math.max(model[i] + 0.01, Math.min(model[i + 2] - 0.01, sh[1]));
-  }
+  const audio = own && own.length === S + 1 ? own.map((t) => zero + t) : cut(f, st);
+  const model = modelKnots(st);
   // the first stretch that is really in the recording: what comes before it (a stop holding in silence) was done before the sound
   let first = 0;
   while (first < S - 1 && audio[first + 1] <= audio[first]) first++;
@@ -357,6 +481,6 @@ export function fit(tr: Trajectory, phones: ScorePhone[], rec: VoiceClip): Fit {
   let byRec = fits.get(tr);
   if (!byRec) fits.set(tr, (byRec = new WeakMap()));
   let f = byRec.get(rec);
-  if (!f) byRec.set(rec, (f = fitTo(listen(rec.buffer.getChannelData(0), rec.buffer.sampleRate), phones, tr, rec.marks)));
+  if (!f) byRec.set(rec, (f = fitTo(listen(rec.buffer.getChannelData(0), rec.buffer.sampleRate), phones, tr, rec.marks, rec.from ?? 'onset')));
   return f;
 }

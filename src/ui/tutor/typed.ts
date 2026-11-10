@@ -2,12 +2,13 @@
  * What a learner types into the tutor, as sounds. A word is read by its own
  * writing whatever course is open: Arabic letters as Urdu (or Arabic, in the
  * Arabic course), Devanagari as Hindi, and Latin letters as English in the
- * course of sounds, or, in the three courses of a script, as the Latin
+ * courses of English and of sounds, or, in the three courses of a script, as the Latin
  * spelling of a word of that language ("walid", "salaam", "namaste",
  * "kitab"): nobody who learns the Urdu letters can type them yet. A line may
  * mix them; nothing that has letters is passed over in silence.
  */
 import { Lang, Phone, textToPhones } from '../../dsp/speech/g2p';
+import type { TutorLang } from '../store';
 import { compactPhones } from '../../dsp/speech/indic';
 import { PHONEMES } from '../../dsp/speech/phonemes';
 
@@ -65,11 +66,11 @@ export function latinSpelling(word: string, lang: 'ur' | 'hi' | 'ar'): string {
 
 /**
  * The sounds of what was typed, in the course `course` (null: the course of
- * sounds, where Latin letters are English). Every word is read by its own
+ * sounds; there and in the course of English, Latin letters are English). Every word is read by its own
  * script; words of one script that follow one another are read together, so
  * that a sentence keeps its phrasing.
  */
-export function typedPhones(text: string, course: 'ur' | 'hi' | 'ar' | null): Phone[] {
+export function typedPhones(text: string, course: TutorLang | null): Phone[] {
   const t = text.trim();
   if (!t) return [];
   if ((t.startsWith('/') && t.endsWith('/')) || (t.startsWith('[') && t.endsWith(']'))) return textToPhones(t, 'en');
@@ -86,7 +87,7 @@ export function typedPhones(text: string, course: 'ur' | 'hi' | 'ar' | null): Ph
     let ps: Phone[];
     if (run.script === 'devanagari') ps = textToPhones(line, 'hi');
     else if (run.script === 'arabic') ps = textToPhones(line, course === 'ar' ? 'ar' : 'ur');
-    else if (course === null) ps = textToPhones(line, 'en');
+    else if (course === null || course === 'en') ps = textToPhones(line, 'en');
     else {
       ps = [];
       for (const word of run.words) {
@@ -107,4 +108,4 @@ export function typedPhones(text: string, course: 'ur' | 'hi' | 'ar' | null): Ph
 }
 
 /** The language whose melody and timing suit what was typed: the course's, or English. */
-export const typedLang = (course: 'ur' | 'hi' | 'ar' | null): Lang => course ?? 'en';
+export const typedLang = (course: TutorLang | null): Lang => course ?? 'en';

@@ -8,7 +8,7 @@ import { typedPhones, latinSpelling } from '../src/ui/tutor/typed';
 import { buildScore } from '../src/dsp/speech/sequencer';
 import { stagesOf, trajectory } from '../src/ui/tutor/motion';
 
-const ipa = (text: string, course: 'ur' | 'hi' | 'ar' | null) => typedPhones(text, course).map((p) => p.ipa + (p.long ? 'ː' : '')).join(' ');
+const ipa = (text: string, course: 'ur' | 'hi' | 'ar' | 'en' | null) => typedPhones(text, course).map((p) => p.ipa + (p.long ? 'ː' : '')).join(' ');
 
 describe('what is typed into the tutor', () => {
   it('Latin spellings in the courses of a script are read as that language\'s words', () => {
@@ -25,6 +25,16 @@ describe('what is typed into the tutor', () => {
 
   it('in the course of sounds Latin letters are English', () => {
     expect(ipa('walid', null)).toBe('w æ l ɪ d');
+  });
+
+  it('in the course of English Latin letters are English, and every other script is still read by its own', () => {
+    expect(ipa('walid', 'en')).toBe(ipa('walid', null));
+    expect(ipa('the cat sat on the mat', 'en')).toBe(ipa('the cat sat on the mat', null));
+    expect(ipa('नमस्ते', 'en')).toBe(ipa('नमस्ते', 'hi'));
+    expect(ipa('ولید', 'en')).toBe(ipa('ولید', 'ur'));
+    const phones = typedPhones('she sells sea shells', 'en');
+    const stages = stagesOf(buildScore(phones, { lang: 'en', f0: 120, ps: 8, rate: 0.9, timeScale: 1 }).phones, trajectory(buildScore(phones, { lang: 'en', f0: 120, ps: 8, rate: 0.9, timeScale: 1 })));
+    expect(stages.length).toBeGreaterThanOrEqual(phones.length - 1);
   });
 
   it('every word is read by its own script, in any course', () => {

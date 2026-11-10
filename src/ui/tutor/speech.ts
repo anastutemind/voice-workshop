@@ -80,9 +80,12 @@ export type Say = 'sound' | 'name' | 'word';
 const isMark = (l: Letter) => l.glyph.startsWith('◌');
 const isVowelSound = (l: Letter) => l.sound === 'ã' || PHONEMES[l.sound]?.manner === 'vowel';
 
-/** The text a voice of `via` reads to say a letter's sound, name or word. */
+/** The text a voice of `via` reads to say a letter's sound, name or word ('' when the letter has no name to say). */
 export function speechText(l: Letter, lang: TutorLang, via: TutorLang, what: Say, say: string): string {
   if (what === 'word') return lang === 'ur' && via === 'hi' ? devanagariOf(l.word.ipa) : l.word.text;
+  // English: a voice reads a letter alone by its name; its sound is read from a spelling of its own ("duh", "shh"),
+  // or taken out of a word it starts or ends ("it": the recording keeps the i)
+  if (lang === 'en') return what === 'name' ? l.read?.name ?? l.name : l.read?.sound ?? l.glyph;
   if (lang === 'hi') return l.glyph;
   if (lang === 'ur' && via === 'hi') {
     if (what === 'name') return romanToCompact(l.roman, l.sound).split(' ').map(devanagariOf).join(' ');
@@ -106,7 +109,9 @@ export function speechText(l: Letter, lang: TutorLang, via: TutorLang, what: Say
 
 const synth = (): SpeechSynthesis | null => (typeof window !== 'undefined' && 'speechSynthesis' in window ? window.speechSynthesis : null);
 
-const rank = (v: SpeechSynthesisVoice) => (/premium|enhanced|natural|neural|siri/i.test(v.name) ? 0 : v.localService ? 1 : 2);
+/** the funny voices of some systems (a robot, a bubbling one, a choir): never a teacher */
+const NOVELTY = /^(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Wobble|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Zarvox|Fred|Junior|Ralph|Kathy)\b/;
+const rank = (v: SpeechSynthesisVoice) => (NOVELTY.test(v.name) ? 4 : /premium|enhanced|natural|neural|siri/i.test(v.name) ? 0 : /^Samantha\b/.test(v.name) ? 0.5 : v.localService ? 1 : 2);
 
 /** The best voice of the browser for a language, by the start of its tag ('hi', 'fr', 'en-GB'); null if it has none. */
 export function voiceOf(prefix: string): SpeechSynthesisVoice | null {
@@ -119,6 +124,8 @@ export function voiceOf(prefix: string): SpeechSynthesisVoice | null {
 
 /** The best voice for a language of the tutor, and the language it really speaks (Hindi for Urdu, when Urdu has none). */
 export function voiceFor(lang: TutorLang): { voice: SpeechSynthesisVoice; via: TutorLang } | null {
+  // (English is taught as it is spoken in America, as the teacher's recordings are: an American voice first)
+  if (lang === 'en') { const voice = voiceOf('en-US') ?? voiceOf('en'); return voice ? { voice, via: 'en' } : null; }
   for (const via of (lang === 'ur' ? ['ur', 'hi'] : [lang]) as TutorLang[]) {
     const voice = voiceOf(via);
     if (voice) return { voice, via };
