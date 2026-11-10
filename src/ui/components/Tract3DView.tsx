@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { store, useUi, useTick, FieldMode } from '../store';
 import { useL, useT } from '../i18n';
 import { fieldRgb } from '../canvas';
@@ -83,6 +84,11 @@ export default function Tract3DView() {
     canvas.addEventListener('webglcontextrestored', onRestored);
 
     const scene = new THREE.Scene();
+    // the soft light of a room all around: the walls of the tract shine wet, as tissue does
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.55;
+    pmrem.dispose();
     const camera = new THREE.PerspectiveCamera(35, 1, 0.5, 400);
     scene.add(new THREE.HemisphereLight(0xdfe7ff, 0x2a1d26, 1.1));
     const key = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -115,7 +121,7 @@ export default function Tract3DView() {
       g.setAttribute('position', new THREE.BufferAttribute(sh.positions, 3));
       g.setAttribute('color', new THREE.BufferAttribute(sh.colors, 3));
       g.setIndex(new THREE.BufferAttribute(sh.index, 1));
-      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, metalness: 0, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+      const mat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.42, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.25, side: THREE.DoubleSide, transparent: true, opacity: 0.92 });
       const mesh = new THREE.Mesh(g, mat);
       scene.add(mesh);
       return mesh;
@@ -125,7 +131,7 @@ export default function Tract3DView() {
 
     // teeth
     const toothGeo = new RoundedBoxGeometry(1, 1, 1, 2, 0.18);
-    const toothMat = new THREE.MeshStandardMaterial({ color: 0xf4eedf, roughness: 0.35, metalness: 0 });
+    const toothMat = new THREE.MeshPhysicalMaterial({ color: 0xf1ead8, roughness: 0.22, metalness: 0, clearcoat: 0.8, clearcoatRoughness: 0.15 });
     const teeth = new THREE.InstancedMesh(toothGeo, toothMat, 64);
     scene.add(teeth);
     const dummy = new THREE.Object3D();

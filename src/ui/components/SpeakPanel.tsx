@@ -86,6 +86,8 @@ export function SpeakPanel() {
     if (!ph.length) return;
     const p = voice.manual;
     const score = buildScore(ph, { lang: lg, f0: p.source.f0, ps: Math.max(6, p.source.ps), rate, accent, natural });
+    // the first time, the audio has to wake: the sentence waits a moment for it, or its start is lost
+    if (!voice.running && (await voice.ensureAudio())) await new Promise((r) => setTimeout(r, 250));
     void voice.speak(score, { it: t, en: t });
   };
   const setNatural = (n: Partial<NaturalnessOptions>) => store.setSpeech({ natural: { ...natural, ...n } });

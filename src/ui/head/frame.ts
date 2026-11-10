@@ -3,7 +3,7 @@
  * (glottis at the origin, before the speaker's size and the pharynx stretch)
  * mapped to the pixels of the image.
  */
-export const BACKDROP_FRAME = { x0: -7, x1: 13, y0: -7, y1: 23, width: 1024, height: 1536 };
+export const BACKDROP_FRAME = { x0: -11, x1: 13, y0: -7, y1: 29, width: 1024, height: 1536 };
 
 /** Pixel of a canonical point in the backdrop image. */
 export function framePixel(x: number, y: number): [number, number] {

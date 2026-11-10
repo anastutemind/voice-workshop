@@ -16,6 +16,8 @@ export type Lang = 'it' | 'en';
 export type Mode = 'learn' | 'play' | 'lab' | 'tutor';
 /** the languages the letter tutor teaches */
 export type TutorLang = 'ur' | 'ar' | 'hi';
+/** what the letter tutor has open: one of those alphabets, or the whole International Phonetic Alphabet */
+export type TutorCourse = TutorLang | 'ipa';
 /** playback speeds of the tutor: real time, half, a quarter */
 export type TutorSpeed = 1 | 0.5 | 0.25;
 export type ControlTab = 'source' | 'tract' | 'teeth' | 'noise' | 'output' | 'speak' | 'melody' | 'ab' | 'machine';
@@ -60,7 +62,7 @@ export interface UiState {
   /** the speak panel: text, its language, rate, accent strength and naturalness ingredients */
   speech: { text: string; lang: SpeechLang; rate: number; accent: number; natural: NaturalnessOptions };
   /** the letter tutor: its language, the letter open (index in the alphabet) and the playback speed */
-  tutor: { lang: TutorLang; letter: number; speed: TutorSpeed };
+  tutor: { lang: TutorCourse; letter: number; speed: TutorSpeed };
   /** the American English pronunciation dictionary */
   lexicon: 'idle' | 'loading' | 'ready' | 'error';
 }
@@ -126,12 +128,12 @@ function initialTutor(): UiState['tutor'] {
   const t: UiState['tutor'] = { lang: 'ur', letter: 0, speed: 0.5 };
   try {
     const r = JSON.parse(remembered(TUTOR_KEY) ?? 'null') as Partial<UiState['tutor']> | null;
-    if (r?.lang === 'ur' || r?.lang === 'ar' || r?.lang === 'hi') t.lang = r.lang;
+    if (r?.lang === 'ur' || r?.lang === 'ar' || r?.lang === 'hi' || r?.lang === 'ipa') t.lang = r.lang;
     if (Number.isInteger(r?.letter) && (r!.letter as number) >= 0) t.letter = r!.letter as number;
     if (r?.speed === 1 || r?.speed === 0.5 || r?.speed === 0.25) t.speed = r.speed;
   } catch { /* not remembered */ }
   const q = query('tutor');
-  if (q === 'ur' || q === 'ar' || q === 'hi') { t.lang = q; t.letter = 0; }
+  if (q === 'ur' || q === 'ar' || q === 'hi' || q === 'ipa') { t.lang = q; t.letter = 0; }
   return t;
 }
 function initialPlay(): PlayActivity {

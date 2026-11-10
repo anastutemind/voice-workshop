@@ -215,6 +215,123 @@ export const GESTURES: Record<string, Phoneme> = {
   'ɽʱ': { ...C('ɽʱ', 'tap', true, { tipX: -0.6, groove: 0, velum: 0 }, 0, 0.03, 'paṛhnā'), aspirated: true },
 };
 
-export const PHONEMES: Record<string, Phoneme> = { ...VOWELS, ...GLIDING, ...CONSONANTS, ...ASPIRATED, ...GESTURES };
+// ---------------------------------------------------------------------------
+// The rest of the International Phonetic Alphabet (the tutor's IPA chart).
+// Every posture was placed with the geometry (tests/ipa.test.ts): where it
+// closes or narrows, how wide the passage is, and, for the vowels, where the
+// first two formants fall. They are kept apart from the tables above, whose
+// vowels were fitted to measured English and Italian formants.
+
+/** the front of the tongue against the hard palate: the closure of ɲ, with the velum shut */
+const PALATAL: Partial<Articulators> = { jaw: 0.1, tongueX: 0.9, tongueY: 1.5, tongueRoot: 1.2, tipY: 0.1, groove: 0 };
+/** the blade behind the ridge and the body raised to the palate, the lips spread: the hiss of ɕ */
+const ALVEOLO_PALATAL: Partial<Articulators> = {
+  jaw: 0.05, tongueX: 0.9, tongueY: 1.1, tongueRoot: 1.2, tipX: 0.4, tipY: 0.3, groove: 0.6, lipOpen: 0.5, lipRound: 0, lipProtrude: -0.2, lipTuck: 0, velum: 0,
+};
+/** the back of the tongue drawn up and back to the uvula, the root kept forward so that the throat below stays open */
+const UVULAR: Partial<Articulators> = { jaw: 0.4, tongueRoot: 1.2, tipY: 0, groove: 0, velum: 0 };
+/** the root of the tongue pulled down and back onto the epiglottis, lower in the throat than ħ and ʕ */
+const EPIGLOTTAL: Partial<Articulators> = { jaw: 0.55, tongueX: 0, tongueY: 0, tipY: 0, groove: 0, lipOpen: 0.5, velum: 0 };
+/** the two lips almost together, leaving a slit between them */
+const LIP_SLIT: Partial<Articulators> = { jaw: 0.15, lipTuck: 0, lipRound: 0, lipProtrude: 0, velum: 0 };
+
+export const IPA_EXTRA: Record<string, Phoneme> = {
+  // ---- vowels. Each starts from the vowels above it shares its tongue or its
+  // lips with (y is the tongue of i with the lips of u) and was then moved a
+  // little to its place on the vowel chart (adult male, F1/F2 in Hz)
+  // front rounded: the front tongue of i ɪ e ɛ æ behind rounded lips, which lower F2
+  y: V('y', { jaw: 0.18, tongueX: 1.086, tongueY: 0.796, tongueRoot: 1.173, lipOpen: 0.031, lipRound: 1, lipProtrude: 0.963 }, 'lune (French), über (German)'), // 268/1839
+  'ʏ': V('ʏ', { jaw: 0.279, tongueX: 0.787, tongueY: 0.934, tongueRoot: -0.388, lipOpen: -0.043, lipRound: 0.93, lipProtrude: 0.93 }, 'hübsch (German)'), // 370/1517
+  'ø': V('ø', { jaw: 0.52, tongueX: 0.86, tongueY: 1.079, tongueRoot: -0.171, lipOpen: -0.013, lipRound: 0.99, lipProtrude: 0.4 }, 'feu (French), schön (German)'), // 399/1570
+  'œ': V('œ', { jaw: 0.564, tongueX: 0.53, tongueY: 1.019, tongueRoot: -0.808, lipOpen: 0.064, lipRound: 0.53, lipProtrude: 0.4 }, 'sœur (French)'), // 529/1463
+  'ɶ': V('ɶ', { jaw: 0.916, tongueX: 0.536, tongueY: 0.586, tongueRoot: -0.536, lipOpen: 0.255, lipRound: 0.53, lipProtrude: 0.4 }, 'grøn (Danish)'), // 645/1455
+  // central: the tongue between front and back, high (ɨ ʉ), half way (ɘ ɵ ɜ ɞ) or low (ɐ)
+  'ɨ': V('ɨ', { jaw: 0.22, tongueX: 0.5, tongueY: 1.146, tongueRoot: 0.699, lipOpen: 0.05, lipRound: 0.04, lipProtrude: -0.295 }, 'ты (Russian)'), // 336/1609
+  'ʉ': V('ʉ', { jaw: 0.234, tongueX: 0.78, tongueY: 0.996, tongueRoot: 0.807, lipOpen: 0, lipRound: 1, lipProtrude: 0.963 }, 'hus (Norwegian)'), // 300/1498
+  'ɘ': V('ɘ', { jaw: 0.329, tongueX: 0.407, tongueY: 1.034, tongueRoot: 0.261, lipOpen: 0.28, lipRound: 0, lipProtrude: -0.2 }, 'bit (New Zealand)'), // 425/1678
+  'ɵ': V('ɵ', { jaw: 0.441, tongueX: 0.512, tongueY: 0.936, tongueRoot: 0.198, lipOpen: 0.065, lipRound: 0.85, lipProtrude: 0.5 }, 'full (Swedish)'), // 430/1335
+  'ɜ': V('ɜ', { jaw: 0.506, tongueX: -0.136, tongueY: 0.802, tongueRoot: 0.026, lipOpen: 0.557, lipRound: 0, lipProtrude: -0.2 }, 'bird (British)'), // 573/1519
+  'ɞ': V('ɞ', { jaw: 0.564, tongueX: 0.006, tongueY: 0.729, tongueRoot: -0.048, lipOpen: 0.039, lipRound: 0.55, lipProtrude: 0.4 }, 'tomhail (Irish)'), // 561/1301
+  'ɐ': V('ɐ', { jaw: 0.771, tongueX: 0.077, tongueY: -0.1, tongueRoot: 0.273, lipOpen: 0.383, lipRound: 0, lipProtrude: -0.05 }, 'Vater (German), casa (Portuguese)'), // 690/1391
+  // back unrounded: the tongue of u and of o behind spread lips, which raise F2
+  'ɯ': V('ɯ', { jaw: 0.1, tongueX: 0.412, tongueY: 1.122, tongueRoot: 0.289, lipOpen: 0.1, lipRound: 0, lipProtrude: -0.2 }, 'kūki (Japanese)'), // 338/1421
+  'ɤ': V('ɤ', { jaw: 0.271, tongueX: -0.532, tongueY: 0.643, tongueRoot: 0.956, lipOpen: 0.281, lipRound: 0, lipProtrude: -0.2 }, 'è (Mandarin)'), // 480/1251
+  // open back rounded: the tongue of ɑ behind the lips of ɔ
+  'ɒ': V('ɒ', { jaw: 0.887, tongueX: -0.252, tongueY: -0.503, tongueRoot: 0.407, lipOpen: 0.151, lipRound: 0.53, lipProtrude: 0.4 }, 'hot (British)'), // 643/1011
+
+  // ---- stops and nasals
+  // palatal: the closure of ɲ, about 2.6 cm behind the contact of /t/ and 2.2 cm in front of that of /k/
+  c: C('c', 'stop', false, { ...PALATAL, velum: 0 }, 0.5, 0.09, 'tyúk (Hungarian)', { dorsal: true }),
+  'ɟ': C('ɟ', 'stop', true, { ...PALATAL, velum: 0 }, 0.08, 0.07, 'gyerek (Hungarian)', { dorsal: true }),
+  // uvular: the closure of q with the voice (ɢ); for the nasal the back of the
+  // tongue meets the lowered velum just behind the contact of /k/, still in
+  // front of the door to the nose
+  'ɢ': C('ɢ', 'stop', true, { ...CONSONANTS.q.art }, 0.08, 0.07, 'qand (Persian)', { dorsal: true }),
+  'ɴ': C('ɴ', 'nasal', true, { tongueX: -0.6, tongueY: 1.5, tongueRoot: 0.2, tipY: 0, velum: NASAL_VELUM }, 0, 0.08, 'hon (Japanese)', { dorsal: true }),
+  // labiodental nasal: the lower lip on the upper teeth, as close as the lip of /f/ gets (0.1 cm²), the nose open
+  'ɱ': C('ɱ', 'nasal', true, { jaw: 0.12, lipOpen: 0.5, lipTuck: 1, lipRound: 0, lipProtrude: 0, velum: NASAL_VELUM }, 0, 0.07, 'symphony, inverno (Italian)'),
+  // epiglottal stop: the root of the tongue shuts the throat about 3.2 cm above the glottis
+  'ʡ': C('ʡ', 'stop', false, { ...EPIGLOTTAL, tongueX: -0.5, tongueY: -0.3, tongueRoot: -0.9 }, 0.5, 0.09, 'Agul, Dahalo'),
+
+  // ---- fricatives
+  // bilabial: a slit of 0.13 cm² (ɸ) or 0.21 cm² (β) between the two lips
+  'ɸ': C('ɸ', 'fricative', false, { ...LIP_SLIT, lipOpen: -0.17 }, 0.55, 0.12, 'fune (Japanese)'),
+  'β': C('β', 'fricative', true, { ...LIP_SLIT, lipOpen: -0.16 }, 0.12, 0.08, 'lobo (Spanish)'),
+  // retroflex: the slit of ʂ with the voice
+  'ʐ': C('ʐ', 'fricative', true, { ...CONSONANTS['ʂ'].art }, 0.12, 0.1, 'żaba (Polish)'),
+  // alveolo-palatal: a grooved slit of 0.09 cm² between the places of ʃ and ç
+  'ɕ': C('ɕ', 'fricative', false, { ...ALVEOLO_PALATAL }, 0.55, 0.13, 'xī (Mandarin), shio (Japanese)'),
+  'ʑ': C('ʑ', 'fricative', true, { ...ALVEOLO_PALATAL }, 0.12, 0.1, 'zima (Polish)'),
+  // palatal: the closure of c lowered to a slit of 0.12 cm² (ç) or 0.19 cm² (ʝ)
+  'ç': C('ç', 'fricative', false, { ...PALATAL, tongueY: 1.15, velum: 0 }, 0.55, 0.12, 'ich (German)'),
+  'ʝ': C('ʝ', 'fricative', true, { ...PALATAL, tongueY: 1.08, velum: 0 }, 0.12, 0.09, 'ayer (Spanish)'),
+  // uvular: a slit of 0.14 cm² (χ) or 0.2 cm² (ʁ) between the back of the
+  // tongue and the top of the throat, behind the place of x and above that of ħ
+  'χ': C('χ', 'fricative', false, { ...UVULAR, tongueX: -1.06, tongueY: 0.45 }, 0.55, 0.12, 'acht (Dutch)'),
+  'ʁ': C('ʁ', 'fricative', true, { ...UVULAR, tongueX: -1.0, tongueY: 0.5 }, 0.12, 0.09, 'rouge (French)'),
+  // epiglottal: a slit of 0.14 cm² (ʜ) or a passage of 0.27 cm² (ʢ) about 3.4 cm above the glottis
+  'ʜ': C('ʜ', 'fricative', false, { ...EPIGLOTTAL, tongueRoot: -0.94 }, 0.55, 0.12, 'Agul, Chechen'),
+  'ʢ': C('ʢ', 'approximant', true, { ...EPIGLOTTAL, tongueRoot: -0.8 }, 0, 0.09, 'taʿāl (Iraqi Arabic)'),
+  // the breathy h: the folds vibrate while air leaks between them
+  'ɦ': C('ɦ', 'glottal', true, {}, 0.3, 0.08, 'hoed (Dutch), behind'),
+  // lateral fricatives: the contact of /l/ with the sides of the tongue only
+  // a little lowered, so that the air hisses through 0.15 cm² (ɬ) or 0.21 cm² (ɮ) past them
+  'ɬ': C('ɬ', 'fricative', false, { ...CONSONANTS.l.art, tongueSides: 0.4 }, 0.55, 0.12, 'llan (Welsh)'),
+  'ɮ': C('ɮ', 'fricative', true, { ...CONSONANTS.l.art, tongueSides: 0.5 }, 0.12, 0.09, 'dlala (Zulu)'),
+  // voiceless w: the rounded lips and raised back of /w/ with the folds apart
+  'ʍ': C('ʍ', 'fricative', false, { ...CONSONANTS.w.art }, 0.55, 0.1, 'which (Scottish)'),
+  // the Swedish sj: the slit of x behind rounded lips
+  'ɧ': C('ɧ', 'fricative', false, { jaw: 0.15, tongueX: -0.25, tongueY: 1.05, tongueRoot: 1.2, tipY: 0, groove: 0, lipOpen: 0.2, lipRound: 0.7, lipProtrude: 0.6, lipTuck: 0, velum: 0 }, 0.55, 0.13, 'sju (Swedish)'),
+
+  // ---- approximants and laterals
+  // retroflex: the curled tip of ʈ lowered to a passage of 0.3 cm²
+  'ɻ': C('ɻ', 'approximant', true, { jaw: 0.2, tipX: -0.6, tipY: 1.9, groove: 0, tongueX: 0.1, tongueY: 0.3, tongueRoot: 0.6, velum: 0 }, 0, 0.08, 'ròu (Mandarin), Tamiḻ'),
+  // velar: the place of ɣ opened to 0.36 cm², too wide to hiss
+  'ɰ': C('ɰ', 'approximant', true, { tongueX: -0.25, tongueY: 0.8, tongueRoot: 1.2, tipY: 0, groove: 0, velum: 0 }, 0, 0.06, 'uisa (Korean)'),
+  // labial-palatal: the tongue of /j/ behind rounded lips
+  'ɥ': C('ɥ', 'approximant', true, { jaw: 0.06, tongueX: 1.0, tongueY: 0.925, tongueRoot: 1.2, lipOpen: 0.1, lipRound: 0.9, lipProtrude: 0.7, lipTuck: 0, velum: 0 }, 0, 0.06, 'huit (French)'),
+  // retroflex lateral: the curled tip closes where ʈ does, the air flows past the sides
+  'ɭ': C('ɭ', 'lateral', true, { jaw: 0.12, tipX: -0.6, tipY: 2.2, groove: 0, tongueX: 0.1, tongueY: 0.3, tongueRoot: 0.6, velum: 0 }, 0, 0.08, 'nāḷ (Tamil)'),
+  // The lips of ʙ and the uvula of ʀ flutter in the air stream; the model has
+  // no part that does, so it holds the place of each with the voice on (the
+  // trill itself is told in words by the tutor)
+  'ʙ': C('ʙ', 'approximant', true, { ...LIP_SLIT, lipOpen: -0.165 }, 0, 0.09, 'brrr'),
+  'ʀ': C('ʀ', 'approximant', true, { ...UVULAR, tongueX: -1.02, tongueY: 0.48 }, 0, 0.09, 'rot (German)'),
+  // labiodental flap: the lower lip brushes the upper teeth for an instant
+  'ⱱ': C('ⱱ', 'approximant', true, { jaw: 0.12, lipOpen: 0.522, lipTuck: 1, lipRound: 0, lipProtrude: 0, velum: 0 }, 0, 0.03, 'vwa (Mono)'),
+  // lateral flap: the flick of ɾ with the sides of the tongue lowered
+  'ɺ': C('ɺ', 'tap', true, { tipX: 0.25, groove: 0, tongueSides: 1, velum: 0 }, 0, 0.03, 'roku (Japanese)'),
+
+  // ---- affricates: a stop let go into the hiss made at the same place
+  'tɕ': C('tɕ', 'affricate', false, {}, 0.5, 0.14, 'jī (Mandarin), chichi (Japanese)', { parts: ['t', 'ɕ'] }),
+  'dʑ': C('dʑ', 'affricate', true, {}, 0.1, 0.12, 'jikan (Japanese)', { parts: ['d', 'ʑ'] }),
+  'ʈʂ': C('ʈʂ', 'affricate', false, {}, 0.5, 0.14, 'zhōng (Mandarin), czas (Polish)', { parts: ['ʈ', 'ʂ'] }),
+  'ɖʐ': C('ɖʐ', 'affricate', true, {}, 0.1, 0.12, 'dżem (Polish)', { parts: ['ɖ', 'ʐ'] }),
+};
+// ç is one character or two (c and a combining cedilla) depending on how a
+// text was typed: both spellings name the same sound
+IPA_EXTRA['ç'] = IPA_EXTRA['ç'];
+
+export const PHONEMES: Record<string, Phoneme> = { ...VOWELS, ...GLIDING, ...CONSONANTS, ...ASPIRATED, ...GESTURES, ...IPA_EXTRA };
 
 export const isVowel = (ipa: string): boolean => PHONEMES[ipa]?.manner === 'vowel';

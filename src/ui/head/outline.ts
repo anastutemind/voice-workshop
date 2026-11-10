@@ -5,10 +5,14 @@
  * child's head, a longer pharynx or a lower larynx.
  */
 
-/** Back of the head, from the neck to the crown. */
-export const HEAD_BACK = [-4.6, -3.6, -4.3, 1.0, -4.7, 5.0, -5.5, 8.6, -6.1, 12.0, -5.8, 15.6, -4.2, 18.6, -1.0, 20.6, 3.0, 21.2];
+/**
+ * Back of the head, from the neck to the crown. The skull and the neck have
+ * the size of a real adult's beside the face and the airway (head about
+ * 19.5 cm deep, 23 cm from chin to crown, neck about 10.5 cm deep).
+ */
+export const HEAD_BACK = [-8.2, -3.6, -7.8, 1.0, -7.6, 5.0, -7.9, 8.6, -8.9, 12.0, -9.9, 15.5, -10.3, 19.0, -9.6, 22.5, -7.4, 25.2, -3.6, 26.8, 1.0, 27.1];
 /** Forehead, nose and upper lip, from the crown down. */
-export const HEAD_FRONT_UP = [3.0, 21.2, 6.6, 20.3, 8.4, 18.9, 9.0, 17.2, 8.4, 15.8, 9.3, 14.2, 10.2, 12.8, 10.7, 12.0, 10.5, 11.35, 9.6, 11.05, 9.05, 10.9, 9.0, 10.3, 9.15, 9.5];
+export const HEAD_FRONT_UP = [1.0, 27.1, 5.0, 26.2, 7.9, 23.8, 9.0, 20.8, 9.3, 18.2, 9.2, 17.0, 8.5, 15.8, 9.3, 14.2, 10.2, 12.8, 10.7, 12.0, 10.5, 11.35, 9.6, 11.05, 9.05, 10.9, 9.0, 10.3, 9.15, 9.5];
 /** Chin and the front of the neck (they turn with the jaw by `chinWeight`). */
 export const CHIN = [8.95, 7.6, 8.55, 7.0, 8.25, 6.55, 8.6, 5.7, 8.55, 4.7, 7.7, 3.8, 5.6, 3.25, 3.7, 2.7, 2.75, 0.6, 2.65, -3.6];
 /** Centre line of the nasal cavity, from the nasopharynx to the nostril. */

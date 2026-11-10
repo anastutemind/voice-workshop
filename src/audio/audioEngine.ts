@@ -62,7 +62,14 @@ export class AudioBridge implements VoiceSink {
       const node = new AudioWorkletNode(ctx, 'voice-processor', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
       node.port.onmessage = (e: MessageEvent<RunnerOut>) => {
         const d = e.data;
-        if (d.type === 'telemetry') this.onTelemetry(d.telemetry, d.program);
+        if (d.type === 'telemetry') {
+          // what the engine reports is what it has just computed; it is heard later, by the time the sound
+          // takes to leave the computer. The pictures are drawn from it: it is handed on when it is heard,
+          // so that lips and sound are together
+          const late = ((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * 1000;
+          if (late > 8) setTimeout(() => this.onTelemetry(d.telemetry, d.program), late);
+          else this.onTelemetry(d.telemetry, d.program);
+        }
         else if (d.type === 'stream') this.onStream(d);
         else if (d.type === 'ended') this.onEnded(d.id, d.reason, d.captured);
       };

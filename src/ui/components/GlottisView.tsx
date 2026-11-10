@@ -6,6 +6,18 @@ import { useL } from '../i18n';
 import { useAnimatedCanvas, C, label } from '../canvas';
 import { lfFlow, lfDerivative, rdToTiming, solveLF, timingFromQuotients, LFShape } from '../../dsp/glottis/lf';
 
+let folds: { closed: HTMLImageElement; open: HTMLImageElement } | null = null;
+let foldsAsked = false;
+/** The two photographs of the folds (public/lab), once loaded; null until then or without them. */
+function foldPhotos(): typeof folds {
+  if (!foldsAsked && typeof Image !== 'undefined') {
+    foldsAsked = true;
+    const load = (name: string) => new Promise<HTMLImageElement>((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = `lab/${name}.jpg`; });
+    void Promise.all([load('folds-closed'), load('folds-open')]).then(([closed, open]) => { folds = { closed, open }; }, () => { /* the drawn folds stay */ });
+  }
+  return folds;
+}
+
 /**
  * The vocal folds in slow motion: a top view of the glottis opening and
  * closing, the puffs of air it lets out, and one cycle of the airflow and of
@@ -68,11 +80,28 @@ export function GlottisView() {
     const halfW = 0.5 * len;
     ctx.save();
     ctx.translate(cx, cy);
+    const gap = (open * 0.2 + steady * 0.15) * halfW;
+    const back = steady * 0.22 * halfW + gap * 0.25;
+    const photos = foldPhotos();
+    if (photos) {
+      // the folds as a laryngoscope sees them: a photograph of them together, and one of them apart laid
+      // over it by as much as they are open at this instant of the cycle
+      const R = halfW * 1.12;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.clip();
+      const show = (im: HTMLImageElement, alpha: number) => {
+        const k = (2 * R) / Math.min(im.naturalWidth, im.naturalHeight);
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(im, (-im.naturalWidth * k) / 2, (-im.naturalHeight * k) / 2, im.naturalWidth * k, im.naturalHeight * k);
+      };
+      show(photos.closed, 1);
+      show(photos.open, Math.max(0, Math.min(1, open * 0.8 + steady * 0.9)));
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    } else {
     // laryngeal ring
     ctx.fillStyle = '#2a1c26';
     ctx.beginPath(); ctx.ellipse(0, 0, halfW * 0.85, halfW * 1.1, 0, 0, Math.PI * 2); ctx.fill();
-    const gap = (open * 0.2 + steady * 0.15) * halfW;
-    const back = steady * 0.22 * halfW + gap * 0.25;
     // folds: anterior commissure at the top (front), arytenoids at the bottom (back)
     const foldPath = (side: number) => {
       ctx.beginPath();
@@ -100,6 +129,7 @@ export function GlottisView() {
     // arytenoids
     ctx.fillStyle = '#8e4559';
     for (const side of [-1, 1]) { ctx.beginPath(); ctx.ellipse(side * (back + halfW * 0.22), halfW * 0.82, halfW * 0.2, halfW * 0.12, 0, 0, Math.PI * 2); ctx.fill(); }
+    }
     // arrows: pressure pushes apart while opening, elasticity pulls back
     const opening = ph < (lf ? sh.tp : 0.4);
     ctx.strokeStyle = opening ? C.sky : C.rose; ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = 2;

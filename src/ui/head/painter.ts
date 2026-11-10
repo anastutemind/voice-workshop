@@ -5,7 +5,7 @@
  * so nothing here can hide it.
  */
 import { HeadScene, Mat, Mesh, mul, PIXELS } from './scene';
-import { framePixel } from './frame';
+import { BACKDROP_FRAME, framePixel } from './frame';
 import { fieldColor } from '../canvas';
 
 /** Silent air, as the head view draws it. */
@@ -22,33 +22,37 @@ export interface Backdrop {
   flecksTile?: HTMLCanvasElement;
 }
 
-let backdrop: Backdrop | null = null;
-let failed = false;
-let started = false;
+/** The pictures asked for so far, by address: loading, loaded, or failed. */
+const backdrops = new Map<string, { bd: Backdrop | null; failed: boolean }>();
 
-/** The painted backdrop, once loaded (null until then, or if it cannot load). */
-export function getBackdrop(url = 'anatomy/head.jpg'): Backdrop | null {
-  if (backdrop || failed) return backdrop;
-  if (!started && typeof Image !== 'undefined') {
-    started = true;
+/** The painted backdrop, once loaded (null until then, or if it cannot load). The picture is
+ *  drawn at the frame's size whatever its own, so a finer one stays sharp seen from close. */
+export function getBackdrop(url = 'anatomy/head-real.jpg'): Backdrop | null {
+  let e = backdrops.get(url);
+  if (!e && typeof Image !== 'undefined') {
+    const entry = { bd: null as Backdrop | null, failed: false };
+    backdrops.set(url, (e = entry));
     const img = new Image();
     img.decoding = 'async';
-    img.onload = () => { backdrop = { img, tone: sampleTones(img) }; };
-    img.onerror = () => { failed = true; };
+    img.onload = () => { entry.bd = { img, tone: sampleTones(img) }; };
+    img.onerror = () => { entry.failed = true; };
     img.src = url;
   }
-  return null;
+  return e?.bd ?? null;
 }
+
+/** True once a picture is known not to load. */
+export function backdropFailed(url: string): boolean { return backdrops.get(url)?.failed ?? false; }
 
 /** Average colour of a few pixels around canonical points of the painting. */
 function sampleTones(img: HTMLImageElement): Backdrop['tone'] {
   const fallback = { tissue: '#b9606b', skin: '#e3a98f', mucosa: '#c9606e', tongue: '#d9727f' };
   try {
     const cv = document.createElement('canvas');
-    cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+    cv.width = BACKDROP_FRAME.width; cv.height = BACKDROP_FRAME.height;
     const c = cv.getContext('2d', { willReadFrequently: true });
     if (!c) return fallback;
-    c.drawImage(img, 0, 0);
+    c.drawImage(img, 0, 0, cv.width, cv.height);
     const avg = (x: number, y: number) => {
       const [px, py] = framePixel(x, y);
       const d = c.getImageData(Math.round(px) - 4, Math.round(py) - 4, 9, 9).data;
@@ -144,20 +148,23 @@ function clipOut(ctx: CanvasRenderingContext2D, polys: number[][], R = 200): voi
 /**
  * The backdrop: a base of tissue under the whole head, then each band of the
  * painting in its place, and the bend under the jaw triangle by triangle.
- * `world` maps world centimetres to canvas pixels.
+ * `world` maps world centimetres to canvas pixels. Without `base` the bands
+ * are laid over what the canvas already holds.
  */
-export function paintBackdrop(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop): void {
-  ctx.save();
-  setMat(ctx, world);
-  clipOut(ctx, sc.hole);
-  ctx.beginPath();
-  poly(ctx, sc.outline);
-  ctx.fillStyle = bd.tone.tissue;
-  ctx.fill();
-  // flecked like the mucosa, where a wide jaw opens a gap between the bands
-  ctx.fillStyle = mucosa(ctx, bd, true);
-  ctx.fill();
-  ctx.restore();
+export function paintBackdrop(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, base = true): void {
+  if (base) {
+    ctx.save();
+    setMat(ctx, world);
+    clipOut(ctx, sc.hole);
+    ctx.beginPath();
+    poly(ctx, sc.outline);
+    ctx.fillStyle = bd.tone.tissue;
+    ctx.fill();
+    // flecked like the mucosa, where a wide jaw opens a gap between the bands
+    ctx.fillStyle = mucosa(ctx, bd, true);
+    ctx.fill();
+    ctx.restore();
+  }
   ctx.imageSmoothingQuality = 'high';
   for (const b of sc.bands) {
     ctx.save();
@@ -169,7 +176,7 @@ export function paintBackdrop(ctx: CanvasRenderingContext2D, sc: HeadScene, worl
     clipOut(ctx, sc.hole);
     if (b.world) { ctx.beginPath(); poly(ctx, b.world); ctx.clip(); }
     setMat(ctx, mul(m, PIXELS));
-    ctx.drawImage(bd.img, 0, 0);
+    ctx.drawImage(bd.img, 0, 0, BACKDROP_FRAME.width, BACKDROP_FRAME.height);
     ctx.restore();
   }
   ctx.save();
@@ -221,6 +228,12 @@ export function paintGlow(ctx: CanvasRenderingContext2D, sc: HeadScene, world: M
  * and the moving solids carrying their own painting.
  */
 export function paintSoftParts(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop): void {
+  paintLinings(ctx, sc, world, bd);
+  paintSolids(ctx, sc, world, bd);
+}
+
+/** The mucosa behind the lips and wherever the painting's air is tissue now; with `port`, the air above the velum too. */
+export function paintLinings(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, port = true): void {
   const s = sc.s;
   ctx.save();
   setMat(ctx, world);
@@ -232,6 +245,7 @@ export function paintSoftParts(ctx: CanvasRenderingContext2D, sc: HeadScene, wor
     poly(ctx, q);
     ctx.fill();
   }
+  if (!port) { ctx.restore(); return; }
 
   // the air above the velum: air like the rest, with a wet rim along its vault and wall
   ctx.beginPath();
@@ -252,15 +266,31 @@ export function paintSoftParts(ctx: CanvasRenderingContext2D, sc: HeadScene, wor
   ctx.stroke();
   ctx.restore();
   ctx.restore();
+}
 
+/** The mucosa between the upper incisor and the upper lip alone: the lip lies on the tooth. */
+export function paintVestibule(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop): void {
+  ctx.save();
+  setMat(ctx, world);
+  ctx.fillStyle = mucosa(ctx, bd);
+  ctx.beginPath();
+  poly(ctx, sc.vestibule);
+  ctx.fill();
+  ctx.restore();
+}
+
+/** The moving solids carrying their own painting (all of them, or only those named), and the velum. */
+export function paintSolids(ctx: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, only?: readonly string[], velum = true): void {
+  const s = sc.s;
   // the velum before the palate, which hides its root as the bone hides where it starts
-  paintVelum(ctx, sc.velum, world, s, mucosa(ctx, bd, true));
+  if (velum) paintVelum(ctx, sc.velum, world, s, mucosa(ctx, bd, true));
 
   for (const sp of sc.sprites) {
+    if (only && !only.includes(sp.id)) continue;
     const tooth = sp.id === 'upperIncisor' || sp.id === 'lowerIncisor';
     const texture = () => {
       setMat(ctx, mul(mul(world, sp.tex), PIXELS));
-      ctx.drawImage(bd.img, 0, 0);
+      ctx.drawImage(bd.img, 0, 0, BACKDROP_FRAME.width, BACKDROP_FRAME.height);
     };
     if (sp.area) {
       // a lip with the face in front of it: skin under the painting, wherever it does not reach;
@@ -336,7 +366,7 @@ function paintMesh(ctx: CanvasRenderingContext2D, world: Mat, mesh: Mesh, img: H
 
 /** The painting's triangle p (canonical) drawn onto the triangle q (world), clipped a
  *  pixel larger than q so that no seam shows between neighbours. */
-function paintTriangle(ctx: CanvasRenderingContext2D, world: Mat, p: number[], q: number[], img: HTMLImageElement): void {
+export function paintTriangle(ctx: CanvasRenderingContext2D, world: Mat, p: number[], q: number[], img: HTMLImageElement): void {
   const m = triangleMap(p, q);
   if (!m) return;
   const grow = 0.9 / Math.hypot(world[0], world[1]); // about a pixel, in world units
@@ -352,7 +382,7 @@ function paintTriangle(ctx: CanvasRenderingContext2D, world: Mat, p: number[], q
   ctx.closePath();
   ctx.clip();
   setMat(ctx, mul(mul(world, m), PIXELS));
-  ctx.drawImage(img, 0, 0);
+  ctx.drawImage(img, 0, 0, BACKDROP_FRAME.width, BACKDROP_FRAME.height);
   ctx.restore();
 }
 

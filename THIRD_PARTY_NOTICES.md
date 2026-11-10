@@ -43,3 +43,12 @@ Font License 1.1). The end card of the video carries the same credits.
 `public/anatomy/head.jpg` is a painting generated from the guide image of `scripts/head-guide.ts` and retouched
 to match the model (see Architecture in `README.md`). It and the images in `public/img/` are part of
 this project and are licensed with it.
+
+## Face Cap head (the tutor's mirror)
+
+`public/models/facecap.glb` is the "Face Cap" head with ARKit blend shapes by
+Bannaflak, as distributed with the three.js examples
+(https://github.com/mrdoob/three.js/tree/r186/examples/models/gltf, file
+`facecap.glb`). `public/basis/` holds the Basis Universal texture transcoder
+that ships with three.js (`examples/jsm/libs/basis`, Apache-2.0), needed to
+read the model's textures.
