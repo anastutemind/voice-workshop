@@ -10,9 +10,10 @@ import { computeGeometry } from '../src/dsp/tract/geometry';
 import { Articulators, DEFAULT_ANATOMY, DEFAULT_ARTICULATORS, DEFAULT_TEETH } from '../src/dsp/tract/types';
 import { PHONEMES } from '../src/dsp/speech/phonemes';
 import { FACE_LOWER, FACE_PROFILE, FACE_UPPER, headScene } from '../src/ui/head/scene';
-import { CORNER, mouthMeasure, NET_REST, NET_TRIANGLES, NET_X, netKnots, NX, NY, ROW_LOWER, ROW_UPPER, skinPlacer } from '../src/ui/tutor/skinNet';
+import { CORNER, NET_REST, NET_TRIANGLES, NET_X, netKnots, NX, NY, ROW_LOWER, ROW_UPPER, skinPlacer } from '../src/ui/tutor/skinNet';
 import { mouthsOf } from '../src/ui/tutor/skin';
 import { REST_ART } from '../src/ui/tutor/readout';
+import { mouthFeatures, MouthFeatures } from '../src/ui/tutor/visemes';
 
 const POSTURES: [string, Partial<Articulators>][] = [
   ['rest', {}],
@@ -63,20 +64,21 @@ describe('the skin over the anatomy', () => {
   });
 
   it('the photographs of the mouth are made for this net, and each is shown whole in its own posture', () => {
-    const net = JSON.parse(readFileSync(new URL('../public/skin/net.json', import.meta.url), 'utf8')) as { shapes: Record<string, { at: [number, number]; uv: number[] }> };
-    expect(Object.keys(net.shapes).sort()).toEqual(['o', 'open', 'round']);
+    const net = JSON.parse(readFileSync(new URL('../public/skin/net.json', import.meta.url), 'utf8')) as { shapes: Record<string, { at: [number, number]; features: MouthFeatures; uv: number[] }> };
+    // the mouth shut, pressed, a little, half and wide open, spread, rounded, the lip on the teeth, the tongue between them
+    expect(Object.keys(net.shapes).length).toBeGreaterThanOrEqual(14);
     for (const [name, s] of Object.entries(net.shapes)) {
       expect(s.uv.length, name).toBe(2 * NX * NY);
-      const w = mouthsOf(s.at[0], s.at[1], net.shapes);
+      const w = mouthsOf(s.features, net.shapes);
       expect(w[name], name).toBeGreaterThan(0.97);
     }
-    // a shut mouth at rest shows none of them; their shares never add up to more than the whole
-    const rest = mouthMeasure(scene(REST_ART));
-    for (const v of Object.values(mouthsOf(Math.max(0, rest.gap), rest.forward, net.shapes))) expect(v).toBeLessThan(0.05);
+    // a shut mouth at rest shows the face at rest; the shares always add up to the whole, two photographs at most
+    const g = (art: Partial<Articulators>) => { const a = { ...DEFAULT_ARTICULATORS, ...art }; return mouthFeatures(a, computeGeometry(a, DEFAULT_ANATOMY, DEFAULT_TEETH)); };
+    expect(mouthsOf(g(REST_ART), net.shapes).rest).toBeGreaterThan(0.97);
     for (const [, art] of POSTURES) {
-      const m = mouthMeasure(scene(art));
-      const sum = Object.values(mouthsOf(m.gap, m.forward, net.shapes)).reduce((a, b) => a + b, 0);
-      expect(sum).toBeLessThanOrEqual(1 + 1e-9);
+      const w = mouthsOf(g(art), net.shapes);
+      expect(Object.keys(w).length).toBeLessThanOrEqual(2);
+      expect(Object.values(w).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 9);
     }
   });
 });
