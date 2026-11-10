@@ -8,7 +8,8 @@
  *   const { sheet, POSES } = await import('/scripts/anatomy-sheet.ts');
  *   await sheet(POSES, { cols: 5, cell: 340 });
  *
- * lays the sheet over the page (click it to take it away). Each pose is a name
+ * lays the sheet over the page (click it to take it away); `lines: true` draws over it what is taken out of the
+ * plate (blue), what is kept (yellow), what is taken off whatever is kept (magenta) and the teeth (green). Each pose is a name
  * and the articulators that differ from the default ones (or from the tutor's
  * rest, with `base: 'rest'`); `frame` is the part of the head shown, canonical
  * cm (x0, x1, y0, y1).
@@ -30,7 +31,7 @@ export const POSES: [string, Partial<Articulators>][] = [
 
 let gl: AnatomyGL | null | undefined;
 
-export async function sheet(poses: [string, Partial<Articulators>][], opts: { cols?: number; cell?: number; frame?: [number, number, number, number]; base?: 'rest' | 'default'; shrink?: number } = {}): Promise<HTMLCanvasElement | null> {
+export async function sheet(poses: [string, Partial<Articulators>][], opts: { cols?: number; cell?: number; frame?: [number, number, number, number]; base?: 'rest' | 'default'; shrink?: number; lines?: boolean } = {}): Promise<HTMLCanvasElement | null> {
   let bd = getBackdrop();
   for (let i = 0; i < 50 && !(bd && bd.mask); i++) { await new Promise((r) => setTimeout(r, 100)); bd = getBackdrop(); }
   if (!bd?.mask) return null;
@@ -61,7 +62,7 @@ export async function sheet(poses: [string, Partial<Articulators>][], opts: { co
     const geom = computeGeometry(a, DEFAULT_ANATOMY, DEFAULT_TEETH);
     const sc = headScene(geom, DEFAULT_ANATOMY, a);
     const L = anatomyLayers(sc, geom);
-    gl.render(sc, world, cell, cell, { img: bd.img, mask: bd.mask }, L.cut, L.keep, { neck: [-1e6, -1e6 + 1] }, 1);
+    gl.render(sc, world, cell, cell, { img: bd.img, mask: bd.mask }, L.cut, L.keep, { neck: [-1e6, -1e6 + 1] }, 1, L.clear, L.hard);
     const x = (i % cols) * cell, y = Math.floor(i / cols) * cell;
     // (a picture of the graphics card's canvas is fetched back from it: slow, and fine for a sheet)
     g.drawImage(gl.cv, x, y);
@@ -69,6 +70,21 @@ export async function sheet(poses: [string, Partial<Articulators>][], opts: { co
     oc.clearRect(0, 0, cell, cell);
     L.over(oc, world, bd);
     g.drawImage(over, x, y);
+    if (opts.lines) {
+      // (what is taken out in blue, what is kept in yellow)
+      g.save();
+      g.setTransform(k, 0, 0, -k, x - fr[0] * k, y + fr[3] * k);
+      g.lineWidth = 1 / k;
+      for (const [list, colour] of [[L.cut, 'rgba(0,200,255,0.7)'], [L.keep, 'rgba(255,230,0,0.8)'], [L.clear, 'rgba(255,0,255,0.9)'], [L.hard, 'rgba(0,255,0,0.9)']] as const) {
+        for (const p of list) {
+          if (p.length < 6) continue;
+          g.beginPath(); g.moveTo(p[0], p[1]);
+          for (let j = 2; j < p.length; j += 2) g.lineTo(p[j], p[j + 1]);
+          g.closePath(); g.strokeStyle = colour; g.stroke();
+        }
+      }
+      g.restore();
+    }
     g.fillStyle = 'rgba(255,255,255,0.85)';
     g.font = '600 15px system-ui';
     g.fillText(name, x + 8, y + 20);

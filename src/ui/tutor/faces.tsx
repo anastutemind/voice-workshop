@@ -377,6 +377,45 @@ function paintOverAir(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, b
     lc.closePath(); lc.fill();
     lc.restore();
   }
+  // the free edge of a parted lip: the vermilion turning into the wet mucosa inside it, redder and darker toward
+  // the edge, with a moist light along it
+  for (const m of sc.margins()) {
+    const lip = m.into[1] > 0 ? sc.lips().upper : sc.lips().lower;
+    lc.save();
+    lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
+    lc.beginPath();
+    lc.moveTo(lip[0], lip[1]);
+    for (let i = 2; i < lip.length; i += 2) lc.lineTo(lip[i], lip[i + 1]);
+    lc.closePath();
+    lc.clip();
+    lc.beginPath(); lc.rect(-200, -200, 400, 400); lc.moveTo(m.off[0], m.off[1]);
+    for (let i = 2; i < m.off.length; i += 2) lc.lineTo(m.off[i], m.off[i + 1]);
+    lc.closePath(); lc.clip('evenodd');
+    // (from a little behind the front, where the edge has rounded into the profile)
+    const from = 2 * Math.round(0.15 * (m.edge.length / 2 - 1));
+    const along = (dx: number) => {
+      lc.beginPath();
+      for (let i = from; i < m.edge.length; i += 2) {
+        const x = m.edge[i] + m.into[0] * dx, y = m.edge[i + 1] + m.into[1] * dx;
+        if (i === from) lc.moveTo(x, y); else lc.lineTo(x, y);
+      }
+    };
+    lc.lineCap = 'butt';
+    lc.lineJoin = 'round';
+    // (soft layers, each narrower and a little darker: the surface turning away, no line of its own)
+    for (const [w, colour] of [[0.5, 'rgba(170,58,70,0.07)'], [0.36, 'rgba(160,50,64,0.08)'], [0.24, 'rgba(146,40,56,0.09)'], [0.13, 'rgba(126,30,46,0.1)']] as [number, string][]) {
+      along(0);
+      lc.lineWidth = w * sc.s;
+      lc.strokeStyle = colour;
+      lc.stroke();
+    }
+    // a soft moist light on the roll of the edge
+    along(0.09 * sc.s);
+    lc.lineWidth = 0.06 * sc.s;
+    lc.strokeStyle = 'rgba(255,226,230,0.07)';
+    lc.stroke();
+    lc.restore();
+  }
   lc.save();
   lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
   lc.beginPath();
@@ -454,7 +493,9 @@ function tongueShape(sc: HeadScene, geom: TractGeometry): { outline: number[]; f
   const bend = (0.42 * w - 0.07 * (1 - w)) * Math.min(1, fl / (1.2 * s)) * s;
   const Cq: [number, number] = [0.5 * (E[0] + F[0]) + inx * bend, 0.5 * (E[1] + F[1]) + iny * bend];
   // low, it lies on the bottom teeth: its front follows their inner face down to the gum, with no gap behind them
-  const Lt: [number, number] = [li[6] - 0.03 * s, li[7] - 0.02 * s], Lm: [number, number] = [li[2] - 0.02 * s, li[3]];
+  // (up to the middle of their crowns: above that the painting has no tongue to lay there, only what lies between
+  // it and the teeth, which drawn up to the edge would stand on the tooth as a red spike)
+  const Lt: [number, number] = [li[2] - 0.02 * s, li[3]], Lm: [number, number] = [0.5 * (li[0] + li[2]) - 0.02 * s, 0.5 * (li[1] + li[3])];
   const near = clamp01(1 - (Math.hypot(E[0] - Lt[0], E[1] - Lt[1]) - 0.3 * s) / (1.3 * s));
   const hug = (1 - w) * near;
   const mixP = (u: number[], v: number[], t: number): [number, number] => [u[0] + (v[0] - u[0]) * t, u[1] + (v[1] - u[1]) * t];
@@ -491,9 +532,10 @@ function simple(p: number[]): boolean {
 /**
  * The polygons of air taken out of the anatomy, and what is kept of it inside them: the tongue as it is, the
  * front teeth and the painted lips as the sheet carries them, whose curves the acoustic grid's straight steps
- * would cut square (and whose last steps reach between the lips and the teeth, where there is no air).
+ * would cut square (and whose last steps reach between the lips and the teeth, where there is no air). And what
+ * is taken out whatever is kept (but the teeth): the flat faces where parted lips met, rounded off.
  */
-const airOf = (sc: HeadScene, geom: TractGeometry): { cut: number[][]; keep: number[][] } => {
+const airOf = (sc: HeadScene, geom: TractGeometry): { cut: number[][]; keep: number[][]; clear: number[][]; hard: number[][] } => {
   const solid = (id: string) => sc.sprites.find((q) => q.id === id)?.poly ?? [];
   const t = tongueShape(sc, geom);
   const li = solid('lowerIncisor'), lips = sc.lips();
@@ -501,7 +543,7 @@ const airOf = (sc: HeadScene, geom: TractGeometry): { cut: number[][]; keep: num
   // itself where its floor or its roof turns back, and a fold would be left uncut
   const strip: number[][] = [];
   for (let i = 0; i + 3 < sc.lower.length; i += 2) strip.push([sc.lower[i], sc.lower[i + 1], sc.lower[i + 2], sc.lower[i + 3], sc.upper[i + 2], sc.upper[i + 3], sc.upper[i], sc.upper[i + 1]]);
-  return { cut: [sc.mouth, sc.port, t.front, ...strip], keep: [t.outline, solid('upperIncisor'), li, lips.upper, lips.lower, ...lips.gums] };
+  return { cut: [sc.mouth, sc.port, t.front, ...strip], keep: [t.outline, solid('upperIncisor'), li, lips.upper, lips.lower, ...lips.gums], clear: sc.margins().map((m) => m.off), hard: lips.gums };
 };
 
 /**
@@ -509,9 +551,9 @@ const airOf = (sc: HeadScene, geom: TractGeometry): { cut: number[][]; keep: num
  * the side view does): the air to take out of the plate, what to keep of it inside the air, and what to draw over
  * the air afterwards.
  */
-export function anatomyLayers(sc: HeadScene, geom: TractGeometry): { cut: number[][]; keep: number[][]; over: (lc: CanvasRenderingContext2D, world: Mat, bd: Backdrop) => void } {
-  const { cut, keep } = airOf(sc, geom);
-  return { cut, keep, over: (lc, world, bd) => paintOverAir(lc, sc, world, bd, geom) };
+export function anatomyLayers(sc: HeadScene, geom: TractGeometry): { cut: number[][]; keep: number[][]; clear: number[][]; hard: number[][]; over: (lc: CanvasRenderingContext2D, world: Mat, bd: Backdrop) => void } {
+  const { cut, keep, clear, hard } = airOf(sc, geom);
+  return { cut, keep, clear, hard, over: (lc, world, bd) => paintOverAir(lc, sc, world, bd, geom) };
 }
 
 /**
@@ -523,8 +565,8 @@ export function anatomyLayers(sc: HeadScene, geom: TractGeometry): { cut: number
  */
 export function paintHead(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, geom: TractGeometry, _a?: Pose['art']): void {
   if (!paintPlate(lc, sc, world, bd)) return;
-  const { cut, keep } = airOf(sc, geom);
-  cutAirOut(lc, world, cut, keep);
+  const { cut, keep, clear, hard } = airOf(sc, geom);
+  cutAirOut(lc, world, cut, keep, clear, hard);
   paintOverAir(lc, sc, world, bd, geom);
 }
 
@@ -606,7 +648,7 @@ function drawSide(ctx: CanvasRenderingContext2D, over: CanvasRenderingContext2D,
     const sc = lay.sc;
     scene = sc;
     const yOf = (y: number) => world[3] * y + world[5];
-    const { cut, keep } = airOf(sc, geom);
+    const { cut, keep, clear, hard } = airOf(sc, geom);
     // The plate is stretched by the graphics card, on a canvas of its own under this one (laid in the page the
     // first time): a few milliseconds whatever the computer. Without a card it is painted here, pixel by pixel.
     if (mem.gl === undefined) mem.gl = AnatomyGL.make();
@@ -621,7 +663,7 @@ function drawSide(ctx: CanvasRenderingContext2D, over: CanvasRenderingContext2D,
       }
       const key = `${cw}x${ch}|${frameKey}|${shown.toFixed(3)}`;
       if (!hidden && lay.glKey !== key) {
-        gl.render(sc, world, cw, ch, { img: bd.img, mask: bd.mask! }, cut, keep, { ...edges, neck: [yOf(sc.neckEnd), yOf(sc.neckEnd + 1.6 * sc.s)] }, shown);
+        gl.render(sc, world, cw, ch, { img: bd.img, mask: bd.mask! }, cut, keep, { ...edges, neck: [yOf(sc.neckEnd), yOf(sc.neckEnd + 1.6 * sc.s)] }, shown, clear, hard);
         lay.glKey = key;
       }
       const display = hidden ? 'none' : '';

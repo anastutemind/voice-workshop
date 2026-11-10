@@ -310,10 +310,10 @@ export function paintPlate(ctx: CanvasRenderingContext2D, sc: HeadScene, world: 
 }
 
 /**
- * Takes the air out of a painted layer, but not where something is kept (`keep`): what is behind the layer shows
- * through the air.
+ * Takes the air out of a painted layer, but not where something is kept (`keep`), and `clear` whatever is kept
+ * there but `hard` (the teeth): what is behind the layer shows through the air.
  */
-export function cutAirOut(lc: CanvasRenderingContext2D, world: Mat, cut: number[][], keep: number[][]): void {
+export function cutAirOut(lc: CanvasRenderingContext2D, world: Mat, cut: number[][], keep: number[][], clear: number[][] = [], hard: number[][] = []): void {
   lc.save();
   setMat(lc, world);
   clipOut(lc, keep);
@@ -328,6 +328,20 @@ export function cutAirOut(lc: CanvasRenderingContext2D, world: Mat, cut: number[
     poly(lc, turn >= 0 ? q : reversed(q));
   }
   lc.fill('nonzero');
+  lc.restore();
+  // (and what is taken out whatever is kept there)
+  if (!clear.length) return;
+  lc.save();
+  setMat(lc, world);
+  clipOut(lc, hard);
+  lc.globalCompositeOperation = 'destination-out';
+  lc.fillStyle = '#000';
+  for (const q of clear) {
+    if (q.length < 6) continue;
+    lc.beginPath();
+    poly(lc, q);
+    lc.fill('evenodd');
+  }
   lc.restore();
 }
 

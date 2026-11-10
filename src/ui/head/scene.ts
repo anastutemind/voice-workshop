@@ -103,10 +103,10 @@ const MANDIBLE = [
  * the upper incisor's edge and up its back.
  */
 const PARTINGS = [
-  [9.9, 8.06, 8.32, 8.06, 7.9, 8.06, 7.5, 8.05, 7.2, 8.045, 7.1, 8.04, 7.21, 8.25, 7.26, 8.45, 7.295, 8.65, 7.3, 8.95, 7.315, 9.2, 7.31, 9.6, 7.3, 9.97],
-  [7.1, 8.04, 6.96, 7.95, 6.84, 7.8, 6.79, 7.65, 6.79, 7.5, 6.79, 7.05, 6.79, 6.6, 6.75, 6.4, 6.7, 6.2],
-  // (and under the upper incisor's edge and up its back into the mouth: the tooth does not stretch with the air under it)
-  [7.06, 7.93, 6.93, 7.96, 6.83, 8.12, 6.7, 8.4, 6.56, 8.72, 6.45, 8.95],
+  [9.9, 8.06, 8.32, 8.06, 7.9, 8.06, 7.5, 8.05, 7.2, 8.045, 7.16, 8.045, 7.21, 8.25, 7.26, 8.45, 7.295, 8.65, 7.3, 8.95, 7.315, 9.2, 7.31, 9.6, 7.3, 9.97],
+  [7.16, 8.045, 7.12, 7.91, 7.0, 7.88, 6.86, 7.83, 6.77, 7.8, 6.79, 7.65, 6.79, 7.5, 6.79, 7.05, 6.79, 6.6, 6.75, 6.4, 6.7, 6.2],
+  // (and up the back of the upper incisor from under its edge into the mouth: the tooth does not stretch with the air under it)
+  [7.0, 7.88, 6.9, 7.99, 6.83, 8.12, 6.7, 8.4, 6.56, 8.72, 6.45, 8.95],
 ];
 /** The grid of the sheet (canonical): fine over all that moves, BEND_Y on one of its lines (the pharynx stretches below it). */
 export const SHEET_GRID = { x0: -1.6, y0: BEND_Y - 45 * 0.2, h: 0.2, nx: 67, ny: 70 };
@@ -157,15 +157,15 @@ export const FACE_LOWER = [
  * the teeth, where there is none).
  */
 const PAINTED_LIPS: { upper: number[]; lower: number[]; gums: number[][] } = (() => {
-  const upper = [7.3, 10.62, ...FACE_UPPER.slice(0, -2), 8.32, 8.1, 7.9, 8.1, 7.5, 8.09, 7.2, 8.09, 7.14, 8.1, 7.25, 8.27, 7.3, 8.45, 7.335, 8.65, 7.34, 8.95, 7.355, 9.2, 7.35, 9.6, 7.34, 9.98];
-  const lower = [8.32, 8.01, 7.9, 8.01, 7.5, 8.0, 7.2, 8.0, 7.13, 7.99, 7.03, 7.9, 6.89, 7.78, 6.84, 7.65, 6.84, 7.5, 6.84, 7.05, 6.84, 6.6, 6.79, 6.4, 6.74, 6.2, 7.4, 6.05];
+  const upper = [7.3, 10.62, ...FACE_UPPER.slice(0, -2), 8.32, 8.1, 7.9, 8.1, 7.5, 8.09, 7.24, 8.09, 7.25, 8.27, 7.3, 8.45, 7.335, 8.65, 7.34, 8.95, 7.355, 9.2, 7.35, 9.6, 7.34, 9.98];
+  const lower = [8.32, 8.01, 7.9, 8.01, 7.5, 8.0, 7.2, 8.0, 7.17, 7.98, 7.1, 7.86, 6.95, 7.82, 6.85, 7.76, 6.84, 7.65, 6.84, 7.5, 6.84, 7.05, 6.84, 6.6, 6.79, 6.4, 6.74, 6.2, 7.4, 6.05];
   // (up the profile from the fold under the lip, which FACE_LOWER runs down)
   for (let i = 2 * 11; i >= 2; i -= 2) lower.push(FACE_LOWER[i], FACE_LOWER[i + 1]);
   // and the teeth with the gum over their roots, on the other side of the partings: the grid's last lines reach
   // into them as well
   const gums = [
     [7.27, 9.97, 7.27, 9.6, 7.275, 9.2, 7.26, 8.95, 7.255, 8.65, 7.22, 8.45, 7.17, 8.25, 7.07, 8.02, 6.95, 8.08, 6.6, 9.0, 6.5, 9.6, 6.9, 10.1],
-    [6.76, 7.65, 6.76, 7.5, 6.76, 7.05, 6.76, 6.6, 6.71, 6.4, 6.66, 6.2, 6.3, 6.4, 6.2, 7.0, 6.5, 7.6, 6.68, 7.8],
+    [6.76, 7.65, 6.76, 7.5, 6.76, 7.05, 6.76, 6.6, 6.71, 6.4, 6.66, 6.2, 6.25, 6.35, 6.17, 6.52, 6.28, 6.9, 6.47, 7.32, 6.62, 7.68, 6.69, 7.75],
   ];
   return { upper, lower, gums };
 })();
@@ -304,6 +304,13 @@ export interface HeadScene {
   tongue: number[];
   /** the painted lips, and the front teeth with their gums, as the sheet carries them (world outlines; made when first asked) */
   lips: () => { upper: number[]; lower: number[]; gums: number[][] };
+  /**
+   * The free edges of parted lips (world; none while they touch): the painted lips meet on a flat face, which apart
+   * would show as a lip cut square; each lip's is rounded off instead, deepest toward the teeth. For each lip, what
+   * is taken off it (`off`), and its edge as it is then, from its front to its back (`edge`), and which way is into
+   * the lip (`into`, a unit vector).
+   */
+  margins: () => { off: number[]; edge: number[]; into: [number, number] }[];
   /** the air (world): lower edge from the glottis to the lips, then the upper edge back */
   lumen: number[];
   lower: number[];
@@ -526,19 +533,37 @@ function offParting(x: number, y: number, side: [number, number]): [number, numb
       if (d < best) { best = d; px = qx; py = qy; const L = Math.sqrt(L2); nx = -dy / L; ny = dx / L; }
     }
   }
-  if (best >= CLEAR) return [x, y];
   if (nx * (side[0] - px) + ny * (side[1] - py) < 0) { nx = -nx; ny = -ny; }
+  // (near enough, or near and on the other side of it)
+  const wrong = nx * (x - px) + ny * (y - py) < 0;
+  if (best >= CLEAR && !(wrong && best < 0.15)) return [x, y];
   return [px + nx * CLEAR, py + ny * CLEAR];
 }
 
-/** Which points of the lips' outlines (`lipFaces`) lead the sheet: all but the two the still head holds anyway. */
-const UPPER_LEADS = (n: number) => Array.from({ length: n - 2 }, (_, i) => i + 1);
+/**
+ * Which points of the lips' outlines (`lipFaces`) lead the sheet: the painted profile and the edges where the lips
+ * meet. Not the model's inner side of each lip (the upper lip's points 1, 0 and 9, the lower lip's point 1): a lip
+ * that moves stays on its teeth, sliding along them (SLIDE_UPPER, SLIDE_LOWER), and never leaves a hole between.
+ */
+const UPPER_LEADS = (n: number) => Array.from({ length: n - 5 }, (_, i) => i + 1);
+const LOWER_LEADS = (n: number) => Array.from({ length: n }, (_, i) => i).filter((i) => i !== n - 4);
+/**
+ * Points of each lip's inner face, just on its side of the parting along its teeth (canonical, from the edge of the
+ * tooth up or down to the gum), led along the tooth's face: as far as the lip's edge moves along it at the edge,
+ * not at all where the lip turns onto the gum.
+ */
+const SLIDE_UPPER = [7.31, 8.45, 7.345, 8.65, 7.35, 8.95, 7.365, 9.2, 7.36, 9.5, 7.35, 9.75];
+const SLIDE_LOWER = [6.85, 7.6, 6.85, 7.3, 6.85, 7.0, 6.84, 6.7, 6.8, 6.45];
+/** The direction of the upper and lower incisors' fronts (canonical, toward the gum and toward the edge, unit). */
+const AXIS_UPPER: [number, number] = [0.074, 0.997], AXIS_LOWER: [number, number] = [0, 1];
+const slideUpper = (y: number) => ease((9.97 - y) / (9.97 - 8.3));
+const slideLower = (y: number) => Math.max(0, Math.min(1, (y - 6.2) / (7.7 - 6.2))) ** 1.5;
 
 interface Leads {
   /** the led points at rest, on the painting (canonical), and how firmly each holds */
   rest: number[]; weights: number[];
-  /** how many of them are the tongue's, the upper lip's, the lower lip's (in that order) */
-  tongue: number; upper: number[]; lower: number;
+  /** how many of them are the tongue's, which of the lips' outlines' points follow (in that order) */
+  tongue: number; upper: number[]; lower: number[];
 }
 let leads: Leads | null = null;
 let sheetWarp: Warp | null = null;
@@ -573,16 +598,19 @@ function theWarp(): { warp: Warp; leads: Leads } {
     rest.push(...offParting(restFaces.upper[2 * i], restFaces.upper[2 * i + 1], UPPER_SIDE));
     weights.push(LEAD);
   }
-  for (let i = 0; i < restFaces.lower.length; i += 2) {
-    rest.push(...offParting(restFaces.lower[i], restFaces.lower[i + 1], LOWER_SIDE));
+  const lower = LOWER_LEADS(restFaces.lower.length / 2);
+  for (const i of lower) {
+    rest.push(...offParting(restFaces.lower[2 * i], restFaces.lower[2 * i + 1], LOWER_SIDE));
     weights.push(LEAD);
   }
+  // the lips' inner faces, on their teeth
+  for (const p of [SLIDE_UPPER, SLIDE_LOWER]) for (let i = 0; i < p.length; i += 2) { rest.push(p[i], p[i + 1]); weights.push(LEAD); }
   // the skin under the chin
   for (let i = 0; i < SKIN_UNDER.length; i += 2) { rest.push(SKIN_UNDER[i], SKIN_UNDER[i + 1]); weights.push(LEAD / 2); }
   // the front of the larynx, which the model moves with the tongue's root (less and less down toward the vocal folds)
   const lx = G.solids.get('larynx')!;
   for (const i of LARYNX_LEAD) { rest.push(lx[2 * i], lx[2 * i + 1]); weights.push(LEAD / 2); }
-  leads = { rest, weights, tongue: t0.length / 2, upper, lower: restFaces.lower.length / 2 };
+  leads = { rest, weights, tongue: t0.length / 2, upper, lower };
   // the painting's air at rest: over the painted tongue (from the foot of its root to its tip), on along the
   // guide's floor of the air to the lips, and back under its roof to the larynx
   const nearRay = (x: number, y: number) => {
@@ -690,14 +718,27 @@ export function headScene(geom: TractGeometry, an: Anatomy, a: Articulators): He
     const u0 = q;
     for (const i of L.upper) put(upperFace[2 * i], upperFace[2 * i + 1]);
     const l0 = q;
-    for (let i = 0; i < 2 * L.lower; i += 2) put(lowerFace[i], lowerFace[i + 1]);
+    for (const i of L.lower) put(lowerFace[2 * i], lowerFace[2 * i + 1]);
     // lips pressed together do not pass through one another: where they meet, they meet half way
     // (the upper lip's last profile point and its edge, against the lower lip's first profile point and its edge)
-    const nu = L.upper.length, nl = L.lower;
+    const nu = L.upper.length, nl = L.lower.length;
     const fu = FACE_UPPER.length / 2 - 1 - (L.upper[0] - FACE_PROFILE.upper[0]);
     for (const [a, b] of [[u0 + 2 * fu, l0], [u0 + 2 * (fu + 1), l0 + 2 * (nl - 1)], [u0 + 2 * (fu + 2), l0 + 2 * (nl - 2)], [u0 + 2 * (fu + 3), l0 + 2 * (nl - 3)]]) {
       if (fu + 3 >= nu) break;
       if (to[a + 1] < to[b + 1]) to[a + 1] = to[b + 1] = 0.5 * (to[a + 1] + to[b + 1]);
+    }
+    // the lips' inner faces slide along their teeth as far as each lip's edge moves along them
+    const ax = (axis: [number, number], turn: number): [number, number] => [Math.cos(turn) * axis[0] - Math.sin(turn) * axis[1], Math.sin(turn) * axis[0] + Math.cos(turn) * axis[1]];
+    const au = AXIS_UPPER, al = ax(AXIS_LOWER, dJaw);
+    const cu = apply(cranium, CORNER_UPPER[0], CORNER_UPPER[1]), cl = place(CORNER_LOWER[0], CORNER_LOWER[1], 1);
+    const su = (P(4)[0] - cu[0]) * au[0] + (P(4)[1] - cu[1]) * au[1], sl = (Q(4)[0] - cl[0]) * al[0] + (Q(4)[1] - cl[1]) * al[1];
+    for (let i = 0; i < SLIDE_UPPER.length; i += 2) {
+      const w = slideUpper(SLIDE_UPPER[i + 1]) * su;
+      put(s * SLIDE_UPPER[i] + w * au[0], s * SLIDE_UPPER[i + 1] + w * au[1]);
+    }
+    for (let i = 0; i < SLIDE_LOWER.length; i += 2) {
+      const w = slideLower(SLIDE_LOWER[i + 1]) * sl, b = place(SLIDE_LOWER[i], SLIDE_LOWER[i + 1], 1);
+      put(b[0] + w * al[0], b[1] + w * al[1]);
     }
     for (let i = 0; i < SKIN_UNDER.length; i += 2) put(...place(SKIN_UNDER[i], SKIN_UNDER[i + 1], chinWeight(SKIN_UNDER[i])));
     const lx = solid('larynx');
@@ -737,14 +778,73 @@ export function headScene(geom: TractGeometry, an: Anatomy, a: Articulators): He
   const lips = () => {
     if (lipsNow) return lipsNow;
     const carry = (p: number[]) => {
-      const out: number[] = [];
+      const at: number[] = [], moved: number[] = [];
       for (let i = 0; i < p.length; i += 2) {
         const j = (i + 2) % p.length, n = Math.max(1, Math.ceil(Math.hypot(p[j] - p[i], p[j + 1] - p[i + 1]) / 0.1));
-        for (let k = 0; k < n; k++) out.push(...warp(p[i] + ((p[j] - p[i]) * k) / n, p[i + 1] + ((p[j + 1] - p[i + 1]) * k) / n));
+        for (let k = 0; k < n; k++) {
+          const x = p[i] + ((p[j] - p[i]) * k) / n, y = p[i + 1] + ((p[j + 1] - p[i + 1]) * k) / n;
+          const w = warp(x, y), r = toWorld(x, y);
+          at.push(w[0], w[1]); moved.push(w[0] - r[0], w[1] - r[1]);
+        }
+      }
+      // (a point right where the partings meet may be carried by the far side of one: it moves unlike both its
+      // neighbours, and is left out rather than drawn as a spike across the air)
+      const out: number[] = [], m = at.length / 2;
+      for (let i = 0; i < m; i++) {
+        const a = (i + m - 1) % m, b = (i + 1) % m;
+        const ex = moved[2 * i] - 0.5 * (moved[2 * a] + moved[2 * b]), ey = moved[2 * i + 1] - 0.5 * (moved[2 * a + 1] + moved[2 * b + 1]);
+        if (Math.hypot(ex, ey) < 0.2 * s) out.push(at[2 * i], at[2 * i + 1]);
       }
       return out;
     };
     return (lipsNow = { upper: carry(PAINTED_LIPS.upper), lower: carry(PAINTED_LIPS.lower), gums: PAINTED_LIPS.gums.map(carry) });
+  };
+
+  // the free edges of parted lips, rounded (worked out when first asked)
+  let marginsNow: { off: number[]; edge: number[]; into: [number, number] }[] | null = null;
+  const margins = () => {
+    if (marginsNow) return marginsNow;
+    // the parting where the lips meet, front to back (canonical), each lip's side of it, carried
+    const line = PARTINGS[0];
+    const lineY = (x: number) => {
+      for (let i = 2; i + 1 < 12; i += 2) if (x >= line[i + 2]) return line[i + 1] + ((line[i + 3] - line[i + 1]) * (x - line[i])) / (line[i + 2] - line[i]);
+      return line[11];
+    };
+    const side = (dy: number) => { const out: number[] = []; for (let x = 8.3; x >= 7.15; x -= 0.07) out.push(...warp(x, lineY(x) + dy)); return out; };
+    const up = side(0.02), lo = side(-0.02);
+    // (the lower lip's top goes on back along the parting from the lower incisor, down to its edge: its rounding
+    // takes in what of the lip rises there)
+    for (const [x, y] of [[7.17, 7.97], [7.08, 7.86], [6.98, 7.83], [6.88, 7.79], [6.82, 7.74]]) lo.push(...warp(x, y));
+    // (how far apart the model's lips are at their front: shut, nothing is rounded)
+    const gap = Math.min(P(4)[1] - Q(4)[1], P(3)[1] - Q(3)[1]);
+    const f = ease((gap - 0.03 * s) / (0.3 * s));
+    marginsNow = [];
+    if (f <= 0.01) return marginsNow;
+    for (const [e, toward, inside] of [[up, warp(8.6, 8.2), warp(7.6, 8.6)], [lo, warp(8.57, 7.87), warp(7.6, 7.5)]] as const) {
+      const n = e.length / 2, C: [number, number] = [e[0], e[1]], K: [number, number] = [e[2 * n - 2], e[2 * n - 1]];
+      // into the lip: across its edge, on the side its body is
+      let ix = -(K[1] - C[1]), iy = K[0] - C[0];
+      const il = Math.hypot(ix, iy) || 1;
+      ix /= il; iy /= il;
+      if (ix * (inside[0] - C[0]) + iy * (inside[1] - C[1]) < 0) { ix = -ix; iy = -iy; }
+      const r = 0.1 * s * f, D = 0.34 * s * f;
+      const ux = toward[0] - C[0], uy = toward[1] - C[1], ul = Math.hypot(ux, uy) || 1;
+      const F: [number, number] = [C[0] + (r * ux) / ul, C[1] + (r * uy) / ul];
+      // the new edge: the old one taken in more and more toward the teeth (the lip rolling into its inner face),
+      // and rounded at the front into the profile
+      const edge: number[] = [F[0], F[1]];
+      for (let k = 1; k < n; k++) {
+        const t = k / (n - 1), d = D * t ** 1.6 + r * Math.max(0, 1 - t / 0.14) ** 2;
+        edge.push(e[2 * k] + d * ix, e[2 * k + 1] + d * iy);
+      }
+      // (from in front of the corner, where the painting has the shadow between the lips' fronts: apart, it would
+      // be left on the lip as a dark hair)
+      const ahead = warp(9.2, lineY(8.32) + (iy > 0 ? 0.03 : -0.03)), beyond = warp(9.2, lineY(8.32) + (iy > 0 ? 0.25 : -0.25));
+      const off: number[] = [...toward, ...beyond, ...ahead, ...e];
+      for (let k = edge.length - 2; k >= 0; k -= 2) off.push(edge[k], edge[k + 1]);
+      marginsNow.push({ off, edge, into: [ix, iy] });
+    }
+    return marginsNow;
   };
 
   // where the plate painted air that is tissue now: between its edge and ours (worked out when first asked)
@@ -836,7 +936,7 @@ export function headScene(geom: TractGeometry, an: Anatomy, a: Articulators): He
   }
 
   return {
-    s, outline, sheet, warp, place, neckEnd: toWorld(0, NECK_END)[1], tongue: solid('tongue'), lips, lumen, lower, upper, bare,
+    s, outline, sheet, warp, place, neckEnd: toWorld(0, NECK_END)[1], tongue: solid('tongue'), lips, margins, lumen, lower, upper, bare,
     get patch() { return patchesNow(); },
     upperFace, lowerFace, mouth, vestibule, port, portVelum: half, nasal: [...up2, ...lo2], sprites, velum: vel,
   };
