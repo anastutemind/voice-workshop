@@ -14,7 +14,8 @@ import { N_SECTIONS } from '../../dsp/tract/areaFunction';
 import type { Telemetry } from '../../dsp/engine/engine';
 import { HEAD_BACK, HEAD_FRONT_UP, CHIN, NASAL_CENTRE, NASAL_HALF, chinWeight } from '../head/outline';
 import { headScene, mul, Mat, HeadScene } from '../head/scene';
-import { getBackdrop, paintBackdrop, paintSoftParts, paintRim, paintGlow, fadeNeck } from '../head/painter';
+import { getBackdrop, paintGlow, fadeNeck } from '../head/painter';
+import { paintHead } from '../tutor/faces';
 
 type HandleId = 'tongue' | 'tip' | 'jaw' | 'lips' | 'velum' | 'larynx' | 'teeth';
 
@@ -98,8 +99,7 @@ export function HeadView({ guide }: { guide?: Guide } = {}) {
         lc.setTransform(1, 0, 0, 1, 0, 0);
         lc.clearRect(0, 0, cw, ch);
         lay.sc = headScene(geom, an, a);
-        paintBackdrop(lc, lay.sc, world, bd);
-        paintSoftParts(lc, lay.sc, world, bd);
+        paintHead(lc, lay.sc, world, bd, geom, a);
         fadeNeck(lc, lay.sc, world);
         // the crown fades into the top edge instead of being cut by it
         const top = lc.createLinearGradient(0, 0, 0, 36 * dpr);
@@ -112,20 +112,12 @@ export function HeadView({ guide }: { guide?: Guide } = {}) {
         lay.key = key;
       }
       const sc = lay.sc;
+      // the air first, coloured by the sound field; then the painted head over it, with the air cut out of it:
+      // the tongue, the teeth and the lips keep their own outlines, the straight steps of the grid never cut them
+      drawChannel(ctx, geom, X, Y, store.ui.field, tel);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(lay.cv, 0, 0);
       paintGlow(ctx, sc, world, port > 0.02 ? Math.min(1, port / 1.2) * (0.35 + 0.65 * nasalFlow) : 0);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      // the opening between the lips is air too, as dark as silent air
-      if (sc.mouth.length) {
-        path(sc.mouth);
-        ctx.fillStyle = '#05070c';
-        ctx.fill();
-        ctx.fillStyle = fieldColor(0.12, 0.28);
-        ctx.fill();
-      }
-      drawChannel(ctx, geom, X, Y, store.ui.field, tel);
-      paintRim(ctx, sc, world);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     } else {
       paintFlat(ctx, geom, an, a, X, Y, path, k, s, tel, nc, port, nasalFlow);

@@ -13,11 +13,12 @@
  * this module.
  */
 import type { TractGeometry } from '../../dsp/tract/geometry';
-import { guideHead, HeadScene, Mat, mul, PIXELS } from '../head/scene';
+import { guideHead, headScene, HeadScene, Mat, mul, PIXELS } from '../head/scene';
+import { DEFAULT_ANATOMY } from '../../dsp/tract/types';
 import { BACKDROP_FRAME, framePixel } from '../head/frame';
 import { Backdrop, paintBackdrop, paintTriangle } from '../head/painter';
 import { smoothOutline } from '../head/outline';
-import { restGeom } from './readout';
+import { REST_ART, restGeom } from './readout';
 
 export interface SkinView { X: (x: number) => number; Y: (y: number) => number; k: number }
 
@@ -321,6 +322,71 @@ const JAW_PIVOT: [number, number] = [-0.6, 11.0];
 const NET_X = [2, 3, 4, 5, 6, 6.75, 7.5, 8.25, 9, 9.75, 10.5, 12.5];
 const NET_Y = [0, 1, 2, 3, 4, 5, 6, 6.8, PHOTO_LIP - PHOTO_GAP, PHOTO_LIP, 9.2, 10];
 
+/** How high the underside of the jaw is in each photograph, 7 cm in front of the larynx (canonical cm): measured on them. */
+const JAW_UNDER: Record<string, number> = { rest: 4.438, mid: 4.141, open: 2.271, round: 4.177, spread: 4.146, fv: 4.109, th: 3.458, l: 3.057, e: 4.109, o: 3.505, s: 4.156, sh: 4.188 };
+/** The same height on a model's outline (world units in, canonical cm out). */
+function jawUnder(outline: number[], s: number): number {
+  const at = 7.0 * s;
+  let y = Infinity;
+  for (let i = 0; i + 3 < outline.length; i += 2) {
+    const x0 = outline[i], x1 = outline[i + 2];
+    if ((x0 - at) * (x1 - at) > 0 || x0 === x1) continue;
+    y = Math.min(y, outline[i + 1] + ((at - x0) / (x1 - x0)) * (outline[i + 3] - outline[i + 1]));
+  }
+  return y / s;
+}
+let restUnder: number | null = null;
+const CHIN_X = [2, 3.2, 4.4, 5.6, 6.8, 8, 9.2, 10.4, 12.5];
+const CHIN_Y = [-1, 0.2, 1.4, 2.6, 3.8, 5, 6.1, 7.2];
+
+/**
+ * The face photographed in a mouth shape, with its jaw where the model's
+ * is. A photograph has the jaw of the moment it was taken; the model's jaw
+ * is a little higher or lower at every instant, and the anatomy under the
+ * skin follows the model. So the chin of the photograph is turned about the
+ * jaw's joint by the difference (a few degrees at most: the lips, which are
+ * what the photograph is for, are not touched), and the skin stays around
+ * the anatomy instead of the anatomy being cut to the skin.
+ */
+function paintProfile(lc: CanvasRenderingContext2D, img: HTMLImageElement, shape: string, sc: HeadScene, world: Mat): void {
+  const s = sc.s;
+  const still = mul(mul(world, [s, 0, 0, s, 0, 0]), PIXELS);
+  restUnder ??= jawUnder(headScene(restGeom(), DEFAULT_ANATOMY, REST_ART).outline, s);
+  const under = jawUnder(sc.outline, s);
+  const photo = JAW_UNDER[shape] ?? JAW_UNDER[STAND_IN[shape] ?? 'rest'] ?? JAW_UNDER.rest;
+  // how much lower (or higher) the model's jaw is than this photograph's, as an angle at the joint
+  const turn = Number.isFinite(under) ? Math.max(-0.2, Math.min(0.2, ((under - restUnder) - (photo - JAW_UNDER.rest)) / 7.6)) : 0;
+  const x0 = CHIN_X[0], x1 = CHIN_X[CHIN_X.length - 1], y0 = CHIN_Y[0], y1 = CHIN_Y[CHIN_Y.length - 1];
+  if (Math.abs(turn) < 0.004) {
+    lc.setTransform(still[0], still[1], still[2], still[3], still[4], still[5]);
+    lc.drawImage(img, 0, 0, BACKDROP_FRAME.width, BACKDROP_FRAME.height);
+    return;
+  }
+  lc.save();
+  lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
+  lc.beginPath();
+  lc.rect(-200, -200, 400, 400);
+  lc.rect(x0 * s, y0 * s, (x1 - x0) * s, (y1 - y0) * s);
+  lc.clip('evenodd');
+  lc.setTransform(still[0], still[1], still[2], still[3], still[4], still[5]);
+  lc.drawImage(img, 0, 0, BACKDROP_FRAME.width, BACKDROP_FRAME.height);
+  lc.restore();
+  const knot = (x: number, y: number): [number, number] => {
+    // wholly at the chin, less toward the lips above and the neck behind, nothing at the net's edge
+    const a = turn * smooth((x - 2.0) / 3.5) * smooth((7.2 - y) / 2.4) * smooth((y + 1) / 1.6);
+    const c = Math.cos(a), sn = Math.sin(a), dx = x - JAW_PIVOT[0], dy = y - JAW_PIVOT[1];
+    return [(JAW_PIVOT[0] + c * dx - sn * dy) * s, (JAW_PIVOT[1] + sn * dx + c * dy) * s];
+  };
+  for (let j = 0; j + 1 < CHIN_Y.length; j++) {
+    for (let i = 0; i + 1 < CHIN_X.length; i++) {
+      const xa = CHIN_X[i], xb = CHIN_X[i + 1], ya = CHIN_Y[j], yb = CHIN_Y[j + 1];
+      const q00 = knot(xa, ya), q10 = knot(xb, ya), q01 = knot(xa, yb), q11 = knot(xb, yb);
+      paintTriangle(lc, world, [xa, ya, xb, ya, xb, yb], [...q00, ...q10, ...q11], img);
+      paintTriangle(lc, world, [xa, ya, xb, yb, xa, yb], [...q00, ...q11, ...q01], img);
+    }
+  }
+}
+
 /**
  * The photographed face, moved as a face moves. It is one skin, not rigid
  * pieces: the lower lip follows the model's lips, the chin its jaw, the
@@ -389,9 +455,7 @@ export function paintSkin(lc: CanvasRenderingContext2D, mask: HTMLCanvasElement,
   // the face photographed in this very mouth shape: shown as it is, nothing stretched, nothing cut
   const shot = profileShot(shape);
   if (shot) {
-    const m = mul(mul(world, [s, 0, 0, s, 0, 0]), PIXELS);
-    lc.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
-    lc.drawImage(shot, 0, 0, BACKDROP_FRAME.width, BACKDROP_FRAME.height);
+    paintProfile(lc, shot, shape, sc, world);
     lc.setTransform(1, 0, 0, 1, 0, 0);
     return;
   }

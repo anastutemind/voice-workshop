@@ -86,6 +86,12 @@ export function SpeakPanel() {
     if (!ph.length) return;
     const p = voice.manual;
     const score = buildScore(ph, { lang: lg, f0: p.source.f0, ps: Math.max(6, p.source.ps), rate, accent, natural });
+    // The head speaks, then goes back to where the hands left it. Left at the open mouth it starts with, it
+    // would close at the end of the sentence and open again: a second movement that says nothing. While the
+    // lungs are off the hands' own posture is a mouth at rest, closed, so the head ends closed and stays so.
+    if (!voice.manual.phonate && (voice.manual.articulators.lipOpen > -0.2 || voice.manual.articulators.jaw > 0.2)) {
+      voice.edit((m) => { m.articulators.jaw = 0.15; m.articulators.lipOpen = -0.3; m.articulators.lipRound = 0; m.articulators.lipProtrude = 0; });
+    }
     // the first time, the audio has to wake: the sentence waits a moment for it, or its start is lost
     if (!voice.running && (await voice.ensureAudio())) await new Promise((r) => setTimeout(r, 250));
     void voice.speak(score, { it: t, en: t });

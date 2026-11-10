@@ -29,6 +29,71 @@ const LABELS: Record<AnchorKey, { it: string; en: string }> = {
 const ANCHORS = Object.keys(LABELS) as AnchorKey[];
 const WATER = new THREE.Color(0.27, 0.62, 0.92);
 
+/**
+ * The look of wet mucosa, made once: a colour map (near white, so the
+ * colours of the mesh under it keep their meaning: mottled, with fine
+ * vessels) and a relief map (soft folds and pores), both tiling.
+ */
+function mucosaTextures(): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture } {
+  const N = 512;
+  let seed = 11;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const mk = () => { const c = document.createElement('canvas'); c.width = c.height = N; return c; };
+  const tile = (g: CanvasRenderingContext2D, draw: (dx: number, dy: number) => void) => { for (const dx of [-N, 0, N]) for (const dy of [-N, 0, N]) { g.save(); g.translate(dx, dy); draw(dx, dy); g.restore(); } };
+  const col = mk(), cg = col.getContext('2d')!;
+  cg.fillStyle = '#f4e4e2';
+  cg.fillRect(0, 0, N, N);
+  for (let i = 0; i < 420; i++) {
+    const x = rnd() * N, y = rnd() * N, r = 10 + rnd() * 46, dark = rnd() < 0.55;
+    tile(cg, () => {
+      const gr = cg.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, dark ? `rgba(196,120,124,${0.1 + rnd() * 0.14})` : `rgba(255,246,244,${0.1 + rnd() * 0.16})`);
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      cg.fillStyle = gr;
+      cg.beginPath(); cg.arc(x, y, r, 0, Math.PI * 2); cg.fill();
+    });
+  }
+  // fine vessels: branching red threads under the surface
+  cg.lineCap = 'round';
+  for (let i = 0; i < 46; i++) {
+    let x = rnd() * N, y = rnd() * N, a = rnd() * Math.PI * 2;
+    const steps = 14 + Math.floor(rnd() * 22), w = 0.5 + rnd() * 1.3;
+    const pts: [number, number][] = [[x, y]];
+    for (let k = 0; k < steps; k++) { a += (rnd() - 0.5) * 0.9; x += Math.cos(a) * 9; y += Math.sin(a) * 9; pts.push([x, y]); }
+    tile(cg, () => {
+      cg.strokeStyle = `rgba(150,36,48,${0.16 + rnd() * 0.2})`;
+      cg.lineWidth = w;
+      cg.beginPath();
+      pts.forEach((q, k) => { if (k === 0) cg.moveTo(q[0], q[1]); else cg.lineTo(q[0], q[1]); });
+      cg.stroke();
+    });
+  }
+  const bmp = mk(), bg = bmp.getContext('2d')!;
+  bg.fillStyle = '#808080';
+  bg.fillRect(0, 0, N, N);
+  for (let i = 0; i < 900; i++) {
+    const x = rnd() * N, y = rnd() * N, r = 3 + rnd() * 22, up = rnd() < 0.5;
+    tile(bg, () => {
+      const gr = bg.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, up ? `rgba(255,255,255,${0.1 + rnd() * 0.18})` : `rgba(0,0,0,${0.1 + rnd() * 0.18})`);
+      gr.addColorStop(1, 'rgba(128,128,128,0)');
+      bg.fillStyle = gr;
+      bg.beginPath(); bg.arc(x, y, r, 0, Math.PI * 2); bg.fill();
+    });
+  }
+  const tex = (c: HTMLCanvasElement, srgb: boolean) => { const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; };
+  return { map: tex(col, true), bump: tex(bmp, false) };
+}
+
+/** Texture coordinates laid flat over a mesh from where its points are (the tract is close to a bent sheet): a tile every 3 cm or so. */
+function layUv(geo: THREE.BufferGeometry): void {
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  let uv = geo.attributes.uv as THREE.BufferAttribute | undefined;
+  if (!uv || uv.count !== pos.count) { uv = new THREE.BufferAttribute(new Float32Array(pos.count * 2), 2); geo.setAttribute('uv', uv); }
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) * 0.3 + pos.getZ(i) * 0.19, pos.getY(i) * 0.3 + pos.getZ(i) * 0.13);
+  uv.needsUpdate = true;
+}
+
 /** Value 0..1 of the chosen field at grid line i (as in the head view). */
 function fieldAt(g: TractGeometry, i: number, mode: FieldMode, tel: Telemetry | null): number {
   if (!tel) return 0.15;
@@ -111,7 +176,8 @@ export default function Tract3DView() {
     const airCol = new Float32Array(meshes.air.positions.length);
     airGeo.setAttribute('color', new THREE.BufferAttribute(airCol, 3));
     airGeo.setIndex(new THREE.BufferAttribute(meshes.air.index, 1));
-    const airMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.36, metalness: 0, clearcoat: 0.85, clearcoatRoughness: 0.2, side: THREE.DoubleSide, emissive: 0x120406 });
+    const wet = mucosaTextures();
+    const airMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, map: wet.map, bumpMap: wet.bump, bumpScale: 1.6, roughness: 0.34, metalness: 0, clearcoat: 0.9, clearcoatRoughness: 0.18, side: THREE.DoubleSide, emissive: 0x120406 });
     const air = new THREE.Mesh(airGeo, airMat);
     scene.add(air);
 
@@ -121,7 +187,7 @@ export default function Tract3DView() {
       g.setAttribute('position', new THREE.BufferAttribute(sh.positions, 3));
       g.setAttribute('color', new THREE.BufferAttribute(sh.colors, 3));
       g.setIndex(new THREE.BufferAttribute(sh.index, 1));
-      const mat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.42, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.25, side: THREE.DoubleSide, transparent: true, opacity: 0.92 });
+      const mat = new THREE.MeshPhysicalMaterial({ vertexColors: true, map: wet.map, bumpMap: wet.bump, bumpScale: 1.4, roughness: 0.4, metalness: 0, clearcoat: 0.7, clearcoatRoughness: 0.22, side: THREE.DoubleSide, transparent: true, opacity: 0.94 });
       const mesh = new THREE.Mesh(g, mat);
       scene.add(mesh);
       return mesh;
@@ -177,7 +243,9 @@ export default function Tract3DView() {
       meshes = buildTractMeshes(g, meshes);
       airGeo.attributes.position.needsUpdate = true;
       airGeo.computeVertexNormals();
+      layUv(airGeo);
       for (const m of [upper, lower]) {
+        layUv(m.geometry);
         m.geometry.attributes.position.needsUpdate = true;
         m.geometry.attributes.color.needsUpdate = true;
         m.geometry.computeVertexNormals();

@@ -151,7 +151,6 @@ interface SideMem {
   /** the painted anatomy and the skin, each painted again only when the pose, the size or the frame changes */
   layer: (Painted & { sc: HeadScene | null }) | null;
   skin: (Painted & { mask: HTMLCanvasElement }) | null;
-  tmp?: HTMLCanvasElement;
 }
 
 /** A name on a line to a point: the label in a column at the side, the line to the point. */
@@ -553,6 +552,41 @@ function cutAir(lc: CanvasRenderingContext2D, world: Mat, polys: number[][]): vo
   lc.restore();
 }
 
+/**
+   * The painted head for a posture, on a layer of its own: the plate in its
+   * bands, the air taken out of it, then everything that bounds the air (the
+   * tongue, the teeth, the lips) painted with its own outline over the hole.
+   * What is drawn behind the layer (the air, coloured or dark) shows through
+   * the hole. Every view of the head is painted by this.
+   */
+  export function paintHead(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, geom: TractGeometry, a: Pose['art']): void {
+  paintBackdrop(lc, sc, world, bd);
+  paintLinings(lc, sc, world, bd, false);
+  // the air is taken out of the painting, then everything that bounds it is painted with its own
+  // outline over the hole: the straight steps of the acoustic grid never cut a tooth, a lip or the tongue
+  cutAir(lc, world, [sc.lumen, sc.mouth, sc.port]);
+  // the wet rim of the air's walls, as far forward as the teeth: across the lips the grid's straight steps would show
+  lc.save();
+  lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
+  lc.beginPath();
+  lc.rect(-200, -200, 200 + geom.landmarks.upperEdge[0] - 0.25 * sc.s, 400);
+  lc.clip();
+  paintRim(lc, sc, world);
+  lc.restore();
+  // (the grid's last steps reach up between the top teeth and the lip: no air there, the lip lies on them)
+  paintVestibule(lc, sc, world, bd);
+  paintSolids(lc, sc, world, bd, ['palate']);
+  paintTongue(lc, sc, world, bd, geom, a);
+  paintTooth(lc, sc, world, 'lowerIncisor', bd.tone.mucosa);
+  paintSolids(lc, sc, world, bd, ['lowerLip'], false);
+  paintLipRed(lc, sc, world, 'lowerLip');
+  roundLip(lc, sc, world, 'lowerLip');
+  paintTooth(lc, sc, world, 'upperIncisor', bd.tone.mucosa);
+  paintSolids(lc, sc, world, bd, ['upperLip'], false);
+  paintLipRed(lc, sc, world, 'upperLip');
+  roundLip(lc, sc, world, 'upperLip');
+}
+
 function drawSide(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, time: number, dt: number, face: Face, mem: SideMem): void {
   ctx.clearRect(0, 0, w, h);
   const a = face.pose.art;
@@ -618,31 +652,7 @@ function drawSide(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numb
       lc.clearRect(0, 0, cw, ch);
       lay.sc = headScene(geom, AN, a);
       const sc = lay.sc;
-      paintBackdrop(lc, sc, world, bd);
-      paintLinings(lc, sc, world, bd, false);
-      // the air is taken out of the painting, then everything that bounds it is painted with its own
-      // outline over the hole: the straight steps of the acoustic grid never cut a tooth, a lip or the tongue
-      cutAir(lc, world, [sc.lumen, sc.mouth, sc.port]);
-      // the wet rim of the air's walls, as far forward as the teeth: across the lips the grid's straight steps would show
-      lc.save();
-      lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
-      lc.beginPath();
-      lc.rect(-200, -200, 200 + geom.landmarks.upperEdge[0] - 0.25 * sc.s, 400);
-      lc.clip();
-      paintRim(lc, sc, world);
-      lc.restore();
-      // (the grid's last steps reach up between the top teeth and the lip: no air there, the lip lies on them)
-      paintVestibule(lc, sc, world, bd);
-      paintSolids(lc, sc, world, bd, ['palate']);
-      paintTongue(lc, sc, world, bd, geom, a);
-      paintTooth(lc, sc, world, 'lowerIncisor', bd.tone.mucosa);
-      paintSolids(lc, sc, world, bd, ['lowerLip'], false);
-      paintLipRed(lc, sc, world, 'lowerLip');
-      roundLip(lc, sc, world, 'lowerLip');
-      paintTooth(lc, sc, world, 'upperIncisor', bd.tone.mucosa);
-      paintSolids(lc, sc, world, bd, ['upperLip'], false);
-      paintLipRed(lc, sc, world, 'upperLip');
-      roundLip(lc, sc, world, 'upperLip');
+      paintHead(lc, sc, world, bd, geom, a);
       fadeNeck(lc, sc, world);
       fadeEdges(lc);
       lay.pose = face.pose; lay.w = cw; lay.h = ch; lay.frame = frameKey;
@@ -661,19 +671,7 @@ function drawSide(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numb
     // (not between the lips: there the mouth is open onto the room, and a darker slab would stand in front of the face)
     for (const q of [sc.lumen, sc.port]) if (q.length >= 6) { path(q); ctx.fill(); }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    // under a skin, the anatomy is held inside it: where the photographed face and the model's outline differ
-    // (the chin of an open jaw), nothing of the inside is left sticking out of the skin
-    const within = skin > 0.01 && mem.skin && mem.skin.w === cw && mem.skin.h === ch ? mem.skin.cv : null;
-    if (within) {
-      const tmp = (mem.tmp ??= document.createElement('canvas'));
-      if (tmp.width !== cw || tmp.height !== ch) { tmp.width = cw; tmp.height = ch; }
-      const tc = tmp.getContext('2d')!;
-      tc.globalCompositeOperation = 'copy';
-      tc.drawImage(lay.cv, 0, 0);
-      tc.globalCompositeOperation = 'destination-in';
-      tc.drawImage(within, 0, 0);
-      ctx.drawImage(tmp, 0, 0);
-    } else ctx.drawImage(lay.cv, 0, 0);
+    ctx.drawImage(lay.cv, 0, 0);
     paintGlow(ctx, sc, world, flow.nose > 0.05 ? 0.35 + 0.65 * flow.nose : 0);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalAlpha = 1;
