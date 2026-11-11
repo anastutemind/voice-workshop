@@ -94,6 +94,7 @@ describe('the mirror', () => {
       expect(fine.share, 'a photograph\'s share, at a quarter of the step').toBeLessThan(0.6 * full.share + 0.02);
       expect(full.share).toBeLessThan(0.35);
       expect(stages.length).toBeGreaterThan(0);
-    });
+      // (ten thousand poses each: minutes on a busy machine)
+    }, 600_000);
   }
 });
