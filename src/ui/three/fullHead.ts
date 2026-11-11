@@ -276,6 +276,8 @@ const INSIDE: [string, [number, number], [number, number], number][] = [
 const SIDE = 9.6;
 /** Where the lips meet at rest, and the corner of the mouth (the painting's cm). */
 const LIPS_MEET = 8.06, CORNER = 6.9;
+/** How far forward the lips stand at their middle (the painting's cm): where the lips meet, less a little. */
+const LIPS_FRONT = 8.6;
 /** The neck: where it is cut, where it becomes a plain column under the jaw, its half width, and how many rings it has from the scan's edge down. */
 const NECK_CUT = -3.45, NECK_TOP = 2.6, NECK_HALF = 5.7, RINGS_JOIN = 6, RINGS_NECK = 5;
 /** Where the neck's skin is in the scan's picture (u0, v0, u1, v1: a part of it the scan does not use; v down, as glTF has it). */
@@ -490,9 +492,20 @@ export function buildHead(scan: Scan, outline: ReturnType<typeof paintingOutline
     const q = warp(P[3 * i], P[3 * i + 1]);
     return q[0] < CORNER - 1.2 && q[1] > LIPS_MEET - 2.4 && q[1] < LIPS_MEET + 3.2 && Math.abs(P[3 * i + 2]) * SIDE < 3.4;
   };
+  // (and the lips' inner side more than a few millimetres behind their front: bent onto the painting it runs back
+  // into the mouth in long spikes, which seen through an open mouth would stand there like a row of teeth. The
+  // lips' front follows the curve of the mouth back to its corners)
+  const flange = (t: number) => {
+    const a = idx0[t], b = idx0[t + 1], c = idx0[t + 2];
+    if (a >= scan.skin || b >= scan.skin || c >= scan.skin) return false;
+    const qa = warp(P[3 * a], P[3 * a + 1]), qb = warp(P[3 * b], P[3 * b + 1]), qc = warp(P[3 * c], P[3 * c + 1]);
+    const x = (qa[0] + qb[0] + qc[0]) / 3, y = (qa[1] + qb[1] + qc[1]) / 3, z = ((P[3 * a + 2] + P[3 * b + 2] + P[3 * c + 2]) / 3) * SIDE;
+    if (Math.abs(z) > 3.1 || y < LIPS_MEET - 1.2 || y > LIPS_MEET + 1.5) return false;
+    return x < LIPS_FRONT - 0.25 * z * z - 0.75;
+  };
   const kept: number[] = [];
   for (let t = 0; t < idx0.length; t += 3) {
-    if (pocket(idx0[t]) || (deep(idx0[t]) && deep(idx0[t + 1]) && deep(idx0[t + 2]))) continue;
+    if (pocket(idx0[t]) || (deep(idx0[t]) && deep(idx0[t + 1]) && deep(idx0[t + 2])) || flange(t)) continue;
     kept.push(idx0[t], idx0[t + 1], idx0[t + 2]);
   }
 
@@ -735,11 +748,12 @@ function buildTeeth(src: NonNullable<Scan['teeth']>, warp: (x: number, y: number
     canon[3 * i] = q[0]; canon[3 * i + 1] = q[1]; canon[3 * i + 2] = z * SIDE;
     crown[i] = crown[m + i] = y1 > y0 ? (y - y0) / (y1 - y0) : 0;
     front = Math.max(front, q[0]);
-    // the lower crown under it, turned over onto the same edge: the front ones 2 mm over the upper edges and
-    // 2.5 mm behind them, the arch a little narrower there (the scan's units are 10 cm)
+    // the lower crown under it, turned over onto the same edge and a little shorter: inside the upper arch (the
+    // front ones 5 mm behind the upper edges, the arch narrower) and a little below it, behind the lower lip's
+    // inner side, which keeps them out of sight unless the mouth is well open (the scan's units are 10 cm)
     const a = ease((sx.get(r)! / nx.get(r)! - 0.42) / 0.08);
-    const ql = warp(x - 0.025 * a - 0.003, 2 * y0 - y + 0.02 * a);
-    canon[3 * (m + i)] = ql[0]; canon[3 * (m + i) + 1] = ql[1]; canon[3 * (m + i) + 2] = z * (1 - 0.05 * a) * SIDE;
+    const ql = warp(x - 0.035 * a - 0.015, y0 - 0.85 * (y - y0) - 0.006 - 0.004 * a);
+    canon[3 * (m + i)] = ql[0]; canon[3 * (m + i) + 1] = ql[1]; canon[3 * (m + i) + 2] = z * (0.92 - 0.04 * a) * SIDE;
     lower[m + i] = 1;
   }
   // (the lower row is a mirror image: its triangles turn the other way)

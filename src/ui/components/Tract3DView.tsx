@@ -102,13 +102,13 @@ const PLATE_VS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projec
 const PLATE_FS = 'uniform sampler2D map; uniform float uOpacity; varying vec2 vUv; void main() { gl_FragColor = texture2D(map, vUv) * uOpacity; }';
 
 const SHADE_VS = `
-attribute vec3 tone; attribute vec3 field; attribute float lat;
+attribute vec3 tone; attribute vec3 field; attribute float lat; attribute float front;
 uniform float uField;
-varying vec3 vCol; varying vec3 vN; varying vec3 vV; varying vec3 vP; varying float vLat;
+varying vec3 vCol; varying vec3 vN; varying vec3 vV; varying vec3 vP; varying float vLat; varying float vFront;
 void main() {
   vCol = mix(tone, field, uField);
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  vN = normalMatrix * normal; vV = -mv.xyz; vP = position; vLat = lat;
+  vN = normalMatrix * normal; vV = -mv.xyz; vP = position; vLat = lat; vFront = front;
   gl_Position = projectionMatrix * mv;
 }`;
 /**
@@ -118,7 +118,7 @@ void main() {
  */
 const WALL_FS = `
 uniform float uDepth; uniform float uField; uniform vec4 uMouth;
-varying vec3 vCol; varying vec3 vN; varying vec3 vV; varying vec3 vP; varying float vLat;
+varying vec3 vCol; varying vec3 vN; varying vec3 vV; varying vec3 vP; varying float vLat; varying float vFront;
 float hash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float noise(vec3 x) {
   vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -126,8 +126,9 @@ float noise(vec3 x) {
              mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
 void main() {
-  // (in a whole head its own lips and teeth are the front of the mouth: the airway's walls begin behind the teeth)
-  if (uMouth.z > 0.5 && vP.x > uMouth.w) discard;
+  // (in a whole head its own lips and teeth are the front of the mouth: the airway's walls of the lips and the
+  // incisors are not drawn, nor anything in front of its teeth; the tongue and the palate are)
+  if (uMouth.z > 0.5 && (vFront > 0.5 || vP.x > uMouth.w)) discard;
   vec3 n = normalize(vN), v = normalize(vV);
   if (dot(n, v) < 0.0) n = -n;
   float depth = clamp(-vP.z / uDepth, 0.0, 1.0);
@@ -138,8 +139,9 @@ void main() {
   // the light comes in by the cut: what lies deep in the hollow is in the dark
   float shade = mix(1.0, mix(0.13, 0.55, uField), pow(depth, 0.7));
   // (in a whole head it comes in by the mouth only: dark a little way behind the front teeth)
+  // (the tongue's front and the palate behind the teeth catch the light; the throat is dark)
   float behind = clamp((uMouth.x - vP.x) / uMouth.y, 0.0, 1.0);
-  shade = mix(shade, mix(1.0, mix(0.035, 0.4, uField), pow(behind, 0.55)), uMouth.z);
+  shade = mix(shade, mix(1.0, mix(0.03, 0.4, uField), pow(behind, 1.15)), uMouth.z);
   vec3 c = base * wrap * shade;
   // flesh in shadow stays red, never grey
   c += vec3(0.07, 0.01, 0.012) * (1.0 - wrap) * (1.0 - uField) * shade;
@@ -233,13 +235,14 @@ void main() {
   vec3 n = normalize(vN), v = normalize(vV);
   if (dot(n, v) < 0.0) n = -n;
   vec3 L = ${LIGHT};
-  vec3 col = mix(vec3(0.74, 0.73, 0.7), vec3(0.87, 0.83, 0.74), smoothstep(0.04, 0.4, vCrown));
-  col = mix(col, vec3(0.8, 0.7, 0.58), smoothstep(0.62, 1.0, vCrown));
-  float wrap = 0.42 + 0.58 * max(dot(n, L), 0.0);
+  vec3 col = mix(vec3(0.7, 0.7, 0.69), vec3(0.85, 0.8, 0.7), smoothstep(0.04, 0.38, vCrown));
+  col = mix(col, vec3(0.76, 0.66, 0.54), smoothstep(0.6, 1.0, vCrown));
+  float wrap = 0.38 + 0.62 * max(dot(n, L), 0.0);
   float behind = mix(clamp((uFront.x - vP.x) / uFront.y, 0.0, 1.0), 0.55 * clamp(-vP.z / uDepth, 0.0, 1.0), uCut);
-  float shade = mix(1.0, 0.05, pow(behind, 0.85)) * mix(1.0, 0.5, smoothstep(0.5, 1.0, vCrown));
-  vec3 c = col * wrap * shade + vec3(0.03, 0.008, 0.006) * (1.0 - behind);
-  float spec = pow(max(dot(n, normalize(L + v)), 0.0), 70.0) * 0.32 * (1.0 - behind) * (1.0 - vCrown);
+  // (the canines are in the corners' half light, the teeth behind them in the cheeks' dark)
+  float shade = mix(1.0, 0.025, pow(smoothstep(0.0, 0.8, behind), 0.75)) * mix(1.0, 0.45, smoothstep(0.5, 1.0, vCrown));
+  vec3 c = col * wrap * shade + vec3(0.03, 0.008, 0.006) * (1.0 - smoothstep(0.0, 0.5, behind));
+  float spec = pow(max(dot(n, normalize(L + v)), 0.0), 70.0) * 0.32 * (1.0 - smoothstep(0.08, 0.35, behind)) * (1.0 - vCrown);
   gl_FragColor = vec4(c + vec3(spec), 1.0);
 }`;
 
@@ -259,7 +262,7 @@ void main() {
  */
 const HEAD_FS = `
 uniform float uCut; uniform float uGhost;
-uniform vec3 uFlesh; uniform vec4 uEyeL; uniform vec4 uEyeR; uniform vec3 uIris; uniform mat3 normalMatrix;
+uniform vec3 uFlesh; uniform vec4 uEyeL; uniform vec4 uEyeR; uniform vec3 uIris; uniform vec3 uLook; uniform mat3 normalMatrix;
 uniform sampler2D mapScan;
 varying vec3 vN; varying vec3 vV; varying vec3 vC; varying vec3 vF; varying float vKind; varying vec2 vUv;
 void main() {
@@ -275,7 +278,8 @@ void main() {
     // through the mouth only: in its dark); behind the lips, the back of their inner side: mucosa
     float deep = clamp(-vC.z / 6.0, 0.0, 1.0);
     vec3 inside = uFlesh * mix(mix(0.55, 0.16, deep), 0.09, 1.0 - uCut);
-    gl_FragColor = vec4(mix(inside, vec3(0.5, 0.22, 0.21) * wetShade, mouth), 1.0);
+    vec3 wall = mix(vec3(0.15, 0.05, 0.045) * (1.0 - 0.6 * further), vec3(0.42, 0.17, 0.16) * wetShade * mix(1.0, 0.55, further), uCut);
+    gl_FragColor = vec4(mix(inside, wall, mouth), 1.0);
     return;
   }
   vec3 base = texture2D(mapScan, vUv).rgb;
@@ -291,7 +295,14 @@ void main() {
   if (eye > 0.5) {
     vec4 E = vC.z < 0.0 ? uEyeL : uEyeR;
     vec3 e = normalize(vC - E.xyz);
-    vec3 look = normalize(vec3(1.0, -0.09, 0.04 * sign(-vC.z)));
+    // (a man looks at who looks at him: the eyes turn toward the eye of the view, part of the way, sideways no more
+    // than about 26 degrees and up or down a little, and only while it is in front of the face; at rest they look
+    // ahead, a little down and in)
+    vec3 toEye = normalize(uLook - E.xyz);
+    float facing = smoothstep(-0.25, 0.35, toEye.x);
+    float yaw = 0.04 * sign(-vC.z) + clamp(0.55 * atan(toEye.z, toEye.x), -0.45, 0.45) * facing;
+    float pitch = -0.09 + clamp(0.3 * asin(clamp(toEye.y, -1.0, 1.0)), -0.1, 0.1) * facing;
+    vec3 look = normalize(vec3(cos(pitch) * cos(yaw), sin(pitch), cos(pitch) * sin(yaw)));
     float th = acos(clamp(dot(e, look), -1.0, 1.0));
     vec3 a1 = normalize(cross(look, vec3(0.0, 1.0, 0.0))), a2 = cross(a1, look);
     float ang = atan(dot(e, a2), dot(e, a1));
@@ -406,12 +417,12 @@ export default function Tract3DView() {
     for (let j = RING_SIDE - 1; j >= mid; j--) near.push(ringN - 1 - j);
     const count = rays * ringN;
     const posAttr = new THREE.BufferAttribute(meshes.air.positions, 3);
-    const toneCol = new Float32Array(count * 3), fieldCol = new Float32Array(count * 3), lat = new Float32Array(count);
+    const toneCol = new Float32Array(count * 3), fieldCol = new Float32Array(count * 3), lat = new Float32Array(count), frontOf = new Float32Array(count);
     for (let i = 0; i < rays; i++) for (let j = 0; j < RING_SIDE; j++) {
       const a = Math.abs(Math.sin((Math.PI / 2) * (-1 + (2 * j) / (RING_SIDE - 1))));
       lat[i * ringN + j] = a; lat[i * ringN + ringN - 1 - j] = a;
     }
-    const toneAttr = new THREE.BufferAttribute(toneCol, 3), fieldAttr = new THREE.BufferAttribute(fieldCol, 3), latAttr = new THREE.BufferAttribute(lat, 1);
+    const toneAttr = new THREE.BufferAttribute(toneCol, 3), fieldAttr = new THREE.BufferAttribute(fieldCol, 3), latAttr = new THREE.BufferAttribute(lat, 1), frontAttr = new THREE.BufferAttribute(frontOf, 1);
     // (the whole ring gives every point its normal; the two halves share them)
     const ringGeo = new THREE.BufferGeometry();
     ringGeo.setAttribute('position', posAttr);
@@ -424,6 +435,7 @@ export default function Tract3DView() {
       g.setAttribute('tone', toneAttr);
       g.setAttribute('field', fieldAttr);
       g.setAttribute('lat', latAttr);
+      g.setAttribute('front', frontAttr);
       g.setIndex(halfIndex(order));
       return g;
     };
@@ -510,7 +522,7 @@ export default function Tract3DView() {
     const headUniforms = {
       uCut: { value: 1 }, uGhost: { value: 1 },
       // the eyes as balls (middle, how far the front stands from it), and the colour of the iris (the photographs': a dark brown)
-      uEyeL: { value: new THREE.Vector4(4.36, 16.61, -3.15, 2.46) }, uEyeR: { value: new THREE.Vector4(4.52, 16.85, 3.16, 2.44) }, uIris: { value: new THREE.Vector3(0.17, 0.098, 0.058) },
+      uEyeL: { value: new THREE.Vector4(4.36, 16.61, -3.15, 2.46) }, uEyeR: { value: new THREE.Vector4(4.52, 16.85, 3.16, 2.44) }, uIris: { value: new THREE.Vector3(0.17, 0.098, 0.058) }, uLook: { value: new THREE.Vector3(60, 15, 0) },
       uFlesh: { value: new THREE.Vector3(0.47, 0.15, 0.16) }, mapScan: { value: blank as THREE.Texture },
     };
     const headMat = new THREE.ShaderMaterial({ uniforms: headUniforms, vertexShader: HEAD_VS, fragmentShader: HEAD_FS, side: THREE.DoubleSide });
@@ -678,9 +690,9 @@ export default function Tract3DView() {
         (teethMesh.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
         teethMesh.geometry.computeVertexNormals();
         const fx = sc.place(head.teeth.front, 8.5, 0)[0];
-        teethUniforms.uFront.value.set(fx, 3.4 * sc.s);
+        teethUniforms.uFront.value.set(fx, 2.6 * sc.s);
         // (the mouth is dark from the head's own front teeth back, and the airway's walls begin behind them)
-        wallUniforms.uMouth.value.x = fx; wallUniforms.uMouth.value.w = fx - 0.9 * sc.s;
+        wallUniforms.uMouth.value.x = fx; wallUniforms.uMouth.value.w = fx + 0.1 * sc.s;
       }
       if (head) {
         placeHead(head, sc, headPos, lips ? lipMove(sc, lips) : undefined);
@@ -706,18 +718,23 @@ export default function Tract3DView() {
       ringGeo.computeVertexNormals();
       sc = headScene(g, p.anatomy, p.articulators);
       wallUniforms.uDepth.value = 2.3 * g.scale;
-      wallUniforms.uMouth.value.y = 2.8 * g.scale;
+      wallUniforms.uMouth.value.y = 3.8 * g.scale;
       if (!head?.teeth) { wallUniforms.uMouth.value.x = g.landmarks.upperEdge[0] + 0.15 * g.scale; wallUniforms.uMouth.value.w = 1e3; }
       // every wall in the colour of what it is, the two running into one another where they meet at the side
       for (let i = 0; i < rays; i++) {
         const h = g.hits[Math.min(i, g.lastRay)];
         const up = tones[h.upId ?? 'none'], low = tones[h.lowId ?? 'none'];
+        // (the walls that are the lips and the incisors: a whole head has its own)
+        const lipOrTooth = (id: SolidId | undefined | null) => id === 'upperLip' || id === 'lowerLip' || id === 'upperIncisor' || id === 'lowerIncisor';
+        const fu = lipOrTooth(h.upId) ? 1 : 0, fl = lipOrTooth(h.lowId) ? 1 : 0;
         for (let j = 0; j < ringN; j++) {
           const q = i * ringN + j, own = j < RING_SIDE ? up : low, other = j < RING_SIDE ? low : up, m = 0.5 * lat[q] * lat[q];
           for (let c = 0; c < 3; c++) toneCol[3 * q + c] = own[c] + (other[c] - own[c]) * m;
+          frontOf[q] = j < RING_SIDE ? fu : fl;
         }
       }
       toneAttr.needsUpdate = true;
+      frontAttr.needsUpdate = true;
       let n = 0;
       // (the teeth come arch by arch, from the middle back, a pair at each place: in a whole head the mouth
       // shows the front ones only, the incisors and the canines; those behind them are in the cheeks' dark)
@@ -863,6 +880,8 @@ export default function Tract3DView() {
       teeth.visible = !ownTeeth;
       for (const m of gums) m.visible = !ownTeeth;
       headUniforms.uCut.value = o.cut ? 1 : 0;
+      // (where the eye of the view is, in the head's own centimetres: the eyes look toward it)
+      headUniforms.uLook.value.copy(camera.position).multiplyScalar(1 / (sc?.s || 1));
       plate.visible = plate.visible && true;
       renderer.render(scene, camera);
       // labels, the later ones hidden where they would cover an earlier one or a control

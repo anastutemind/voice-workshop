@@ -473,6 +473,10 @@ def bake(mesh, views, S, log, debug=None):
             t = np.clip((N[..., 1] - a) / (b_ - a), 0, 1)
             w = w * t * t * (3 - 2 * t)
         # (or to what lies below a height: a view from below has the eyes looking up, and is kept to the chin)
+        # (or give way on the top of the head to the views that have hair there: the side photograph's hairline
+        # recedes further than the others', and the head's hair should be one all round)
+        if v.get('yield_top'):
+            w = w * (1 - v['yield_top'] * np.clip((N[..., 1] - 0.3) / 0.4, 0, 1))
         if v.get('max_y') is not None:
             w = w * np.clip((v['max_y'] - P[..., 1]) / 0.6, 0, 1)
         w[~cover] = 0
@@ -547,7 +551,38 @@ def borrow_detail(out, wmax, islands, cover, S, log, seen=0.22, size=None):
             log(f'  grain borrowed for {need.sum()} texels from ({x}, {y}), colour off by {best:.3f}')
     return res
 
-def finish(b, S, log=print):
+def match_seam(out, mesh, cover, islands, S, log, reach=0.06):
+    """The neck is grown from the scan's edge under the jaw, and has its own island in the texture: along that
+    edge the two islands meet, each with the colour its own photographs gave it. The neck's colour is brought to
+    the jaw's along the edge, less and less down the neck."""
+    lo = gauss_masked(out, cover.astype(np.float32), S / 150, islands)
+    uv, same = mesh.uv, mesh.same
+    neck = (uv[:, 0] < 0.475) & (uv[:, 1] < 0.26) & (mesh.kind < 0.5)
+    pairs = [(i, same[i]) for i in np.nonzero(neck & (uv[:, 1] < 0.0125 + 1e-4))[0] if same[i] != i and not neck[same[i]]]
+    if len(pairs) < 8:
+        return out
+    def at(p):
+        x, y = p[0] * S - 0.5, p[1] * S - 0.5
+        return cv2.getRectSubPix(lo.astype(np.float32), (1, 1), (float(x), float(y)))[0, 0]
+    us = np.array([uv[i, 0] for i, _ in pairs])
+    d = np.array([at(uv[r]) - at(uv[i]) for i, r in pairs])
+    o = np.argsort(us); us, d = us[o], d[o]
+    # (a little smoothing along the edge)
+    k = np.ones(5) / 5
+    d = np.stack([np.convolve(np.pad(d[:, c], 2, mode='edge'), k, mode='valid') for c in range(3)], -1)
+    ys, xs = np.nonzero(cover)
+    sel = (xs / S < 0.475) & (ys / S < 0.26)
+    ys, xs = ys[sel], xs[sel]
+    u, v = (xs + 0.5) / S, (ys + 0.5) / S
+    corr = np.stack([np.interp(u, us, d[:, c]) for c in range(3)], -1)
+    fall = np.clip(1 - (v - 0.0125) / reach, 0, 1) ** 1.5
+    out = out.copy()
+    out[ys, xs] += corr * fall[:, None]
+    log(f'  neck matched to the jaw along {len(pairs)} points (mean shift {np.abs(d).mean():.3f})')
+    return out
+
+
+def finish(b, S, log=print, mesh=None):
     """Fills what no photograph saw (from round it, in its own island), makes the inside of the mouth dark and
     wet, and runs every island's colours on past its edge (so that no seam shows when the picture is filtered)."""
     out, have, cover = b['color'].copy(), b['have'], b['cover']
@@ -559,6 +594,8 @@ def finish(b, S, log=print):
         f = push_pull(np.where(m[..., None], out, 0), w)
         hole = m & ~have
         out[hole] = f[hole]
+    if mesh is not None:
+        out = match_seam(out, mesh, cover, b['islands'], S, log)
     out = borrow_detail(out, np.where(have, b['wmax'], 0), b['islands'], cover, S, log)
     # the inside of the mouth: the pocket behind the lips is dark, the lips' own inner side darkening into it
     x = np.where(cover, P[..., 0], 99)
@@ -650,9 +687,9 @@ def main():
         if c.get('crop'):
             y0, y1 = c['crop']
             mask[:y0] = 0; mask[y1:] = 0
-        views.append(dict(name=c['name'], R=R, warp=warp, photo=photo, mask=mask.astype(np.float32), trust=c.get('trust', 1.0), min_cos=c.get('min_cos', 0.08), facing_y=c.get('facing_y'), max_y=c.get('max_y')))
+        views.append(dict(name=c['name'], R=R, warp=warp, photo=photo, mask=mask.astype(np.float32), trust=c.get('trust', 1.0), min_cos=c.get('min_cos', 0.08), facing_y=c.get('facing_y'), max_y=c.get('max_y'), yield_top=c.get('yield_top')))
     b = bake(mesh, views, S, log, debug)
-    tex = finish(b, S, log)
+    tex = finish(b, S, log, mesh)
     Image.fromarray((tex * 255 + 0.5).astype(np.uint8)).save(out_path, quality=90, optimize=True, progressive=True)
     log(f'wrote {out_path} ({os.path.getsize(out_path) / 1e6:.2f} MB)')
     if debug:
