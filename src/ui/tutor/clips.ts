@@ -21,11 +21,11 @@ export interface VoiceClip {
 }
 
 /**
- * The voices the recordings were made with, by the language of what they say (Urdu is read from Devanagari
- * by the Hindi voice): a recording is looked up by its voice, the speed it was asked at, and the text.
+ * The voices the recordings were made with, by the language of what they say: a native speaker of each (Urdu, Hindi
+ * and Arabic), an English one for English. A recording is looked up by its voice, the speed it was asked at, and the text
+ * (the voices are what scripts/tutor-voice.ts asks for under these names: FAL_VOICE).
  */
-/** (the part after a space is only a label that keeps Urdu's recordings apart from Hindi's: the two are named by the same Devanagari text, and said from different scripts) */
-export const RECORDED_VOICE: Record<string, string> = { ur: 'Eric ur', hi: 'Eric', ar: 'Eric', en: 'Eric', 'en-GB': 'Daniel' };
+export const RECORDED_VOICE: Record<string, string> = { ur: 'Naqsh', hi: 'Niraj', ar: 'Hijazi', en: 'Eric', 'en-GB': 'Daniel' };
 /** The name a recording of `text` in a language goes by (null: no recordings are made in that language). */
 export const recordingId = (lang: string, rate: number, text: string): string | null => (RECORDED_VOICE[lang] ? `${RECORDED_VOICE[lang]}|${rate}|${text}` : null);
 

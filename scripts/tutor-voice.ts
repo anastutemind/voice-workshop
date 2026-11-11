@@ -76,6 +76,13 @@ const TTS = { model: 'fal-ai/elevenlabs/tts/eleven-v3', stability: 0.6 };
 const VARIANT = Number(process.env.TAKE_VARIANT ?? 0);
 const STABILITY = [0.6, 0.45, 0.75, 0.9, 0.3, 0.55, 0.65, 0.8, 0.5, 0.7, 0.35, 0.85][VARIANT] ?? 0.6;
 const CACHE = new URL('./.tts-cache/', import.meta.url).pathname;
+/**
+ * The voices of the app by the name the recordings carry (RECORDED_VOICE in clips.ts), as fal.ai's ElevenLabs is asked for them:
+ * its own voices by name, the native speakers of the languages by the id of the voice in ElevenLabs' library
+ * (Urdu: Naqsh, a middle-aged man of standard Urdu; Hindi: Niraj, a veteran Indian actor; Arabic: Hijazi, modern standard Arabic).
+ */
+const FAL_VOICE: Record<string, string> = { Naqsh: 'L1f58R08RFtEqY28c3BT', Niraj: 'zgqefOY5FPQ3bB7OZTVR', Hijazi: 'fkqevZRU7Xj52dY1CTkq' };
+const falVoice = (label: string): string => FAL_VOICE[label.split(' ')[0]] ?? label.split(' ')[0];
 /** the language code the voice is told to speak in */
 const LANG_CODE: Record<string, string> = { ur: 'ur', hi: 'hi', ar: 'ar', en: 'en', 'en-GB': 'en' };
 let collecting = false;
@@ -265,10 +272,10 @@ async function fetchTakes(): Promise<void> {
       // A text the voice refuses (it flags a few harmless words, and returns nothing for some single letters) is
       // tried again the way it may accept: with a trailing mark, then on the service's other model.
       const tries: [string, Record<string, unknown>][] = [
-        [TTS.model, { text: w.text, voice: w.voice.split(' ')[0], language_code: LANG_CODE[w.lang], stability: STABILITY, enable_safety_checker: false }],
-        [TTS.model, { text: w.text + (w.lang === 'hi' ? ' ।' : w.lang === 'ar' || w.lang === 'ur' ? ' ۔' : ' .'), voice: w.voice.split(' ')[0], language_code: LANG_CODE[w.lang], stability: STABILITY, enable_safety_checker: false }],
-        [TTS.model, { text: '… ' + w.text + ' …', voice: w.voice.split(' ')[0], language_code: LANG_CODE[w.lang], stability: 0.8, enable_safety_checker: false }],
-        ['fal-ai/elevenlabs/tts/multilingual-v2', { text: w.text, voice: w.voice.split(' ')[0], language_code: LANG_CODE[w.lang], stability: 0.7, speed: 0.85, enable_safety_checker: false }],
+        [TTS.model, { text: w.text, voice: falVoice(w.voice), language_code: LANG_CODE[w.lang], stability: STABILITY, enable_safety_checker: false }],
+        [TTS.model, { text: w.text + (w.lang === 'hi' ? ' ।' : w.lang === 'ar' || w.lang === 'ur' ? ' ۔' : ' .'), voice: falVoice(w.voice), language_code: LANG_CODE[w.lang], stability: STABILITY, enable_safety_checker: false }],
+        [TTS.model, { text: '… ' + w.text + ' …', voice: falVoice(w.voice), language_code: LANG_CODE[w.lang], stability: 0.8, enable_safety_checker: false }],
+        ['fal-ai/elevenlabs/tts/multilingual-v2', { text: w.text, voice: falVoice(w.voice), language_code: LANG_CODE[w.lang], stability: 0.7, speed: 0.85, enable_safety_checker: false }],
       ];
       let last = '';
       for (const [model, input] of tries) {
