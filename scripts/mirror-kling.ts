@@ -41,9 +41,9 @@ const LEAD = 0.3, GAP = 0.35;
 /** a pack's recordings together last at most this long, seconds (a long clip lets the head wander) */
 const PACK_MAX = 6.5;
 /** the clip of a recording starts this long before its sound and ends this long after, seconds */
-const BEFORE = 0.2, AFTER = 0.3;
+const BEFORE = 0.2, AFTER = 0.1;
 const PRICE = tier === 'pro' ? 0.115 : 0.0562;
-const PROMPT = "A man demonstrating pronunciation to a student, speaking slowly and very clearly, opening his mouth wide with the jaw dropping clearly on open vowels like 'aa', lips and teeth and tongue visible, head still, calm studio light, same framing and skin texture throughout.";
+const PROMPT = "A man demonstrating pronunciation to a student, speaking slowly and with exaggerated articulation. On open vowels like 'aa' his jaw drops fully and his mouth opens very wide, as when a doctor asks to say 'aah', showing his upper and lower teeth and his tongue; for 'm', 'b' and 'p' the lips close firmly. Head still, calm studio light, same framing and skin texture throughout.";
 
 const manifest = JSON.parse(readFileSync(AUDIO + 'manifest.json', 'utf8')) as Record<string, { f: string }>;
 const voices = new Set(Object.values(RECORDED_VOICE));

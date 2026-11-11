@@ -3,7 +3,10 @@
  * the word that was meant: a voice may mispronounce, add a sound, or say another word. Letters (one sound) are
  * not checked: a recogniser does not know what to make of them.
  *
- *   npx tsx scripts/tutor-voice-asr.ts [--lang ur|hi|ar|en] [--min 0.6] [--out file.json]
+ *   npx tsx scripts/tutor-voice-asr.ts [--lang ur|hi|ar|en] [--min 0.6] [--out file.json] [--model whisper|scribe] [--keys earlier.json]
+ *
+ * --model scribe: ElevenLabs' recogniser (better at single words in Arabic and Urdu); --keys: only the recordings an
+ * earlier run (its --out file) listed, to ask a second recogniser about them.
  *
  * A word is compared with what was heard after the marks (vowel signs, tashkeel) and the punctuation are taken
  * off both. Urdu of the letters' courses is heard as Hindi (the key of its recording holds the Devanagari text it was
@@ -20,6 +23,8 @@ const args = process.argv.slice(2);
 const opt = (n: string, d: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : d);
 const only = opt('--lang', '');
 const min = Number(opt('--min', '0.6'));
+const model = opt('--model', 'whisper');
+const keys = opt('--keys', '') ? new Set((JSON.parse(readFileSync(opt('--keys', ''), 'utf8')) as { key: string }[]).map((b) => b.key)) : null;
 const OUT = new URL('../public/audio/tutor/', import.meta.url).pathname;
 const manifest = JSON.parse(readFileSync(OUT + 'manifest.json', 'utf8')) as Record<string, { f: string }>;
 
@@ -45,7 +50,7 @@ for (const [key, v] of Object.entries(manifest)) {
   const lang = LANG_OF_VOICE[voice];
   const text = rest.join('|');
   // (words: said at 0.82; a letter's sound at 0.75; a text of one character is a letter)
-  if (!lang || rate !== '0.82' || [...text].length < 2 || (only && lang !== only)) continue;
+  if (!lang || rate !== '0.82' || [...text].length < 2 || (only && lang !== only) || (keys && !keys.has(key))) continue;
   jobs.push({ key, file: v.f, text, lang });
 }
 console.log(jobs.length, 'words to listen to');
@@ -60,9 +65,11 @@ async function work(): Promise<void> {
       const wav = join(tmp, j.file.replace('.m4a', '.mp3'));
       execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', OUT + j.file, '-ac', '1', '-ar', '16000', '-b:a', '64k', wav]);
       // Urdu is heard as Hindi: the key holds its Devanagari
-      const language = j.lang === 'ur' && !/[\u0600-\u06FF]/.test(j.text) ? 'hi' : j.lang;
-      const r = await fal('fal-ai/wizper', { audio_url: '@' + wav, task: 'transcribe', language });
-      const heard = String((r.body as { text?: string }).text ?? '');
+      const language = j.lang === 'ur' && !/[\u0600-\u06FF]/.test(j.text) ? 'hi' : j.lang === 'en-GB' ? 'en' : j.lang;
+      const r = model === 'scribe'
+        ? await fal('fal-ai/elevenlabs/speech-to-text/scribe-v2', { audio_url: '@' + wav, language_code: language, diarize: false, tag_audio_events: false })
+        : await fal('fal-ai/wizper', { audio_url: '@' + wav, task: 'transcribe', language });
+      const heard = String((r.body as { text?: string }).text ?? '').replace(/\([^)]*\)/g, '');
       const s = similar(norm(j.text), norm(heard));
       if (s < min) bad.push({ key: j.key, heard: heard.trim(), score: Math.round(s * 100) / 100 });
     } catch (e) { bad.push({ key: j.key, heard: 'ERROR ' + (e as Error).message.slice(0, 80), score: 0 }); }
