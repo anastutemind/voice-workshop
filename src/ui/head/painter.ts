@@ -7,7 +7,7 @@
  *
  * On a 2D canvas the sheet is drawn by the processor, pixel by pixel (a few
  * hundredths of a second); the tutor's side view draws it with the graphics
- * card instead (gl.ts).
+ * card instead (gl.ts), which also draws the air as a cavity and the velum.
  */
 import { HeadScene, Mat, mul, PIXELS } from './scene';
 import { BACKDROP_FRAME, framePixel } from './frame';
@@ -367,14 +367,19 @@ export function paintGlow(ctx: CanvasRenderingContext2D, sc: HeadScene, world: M
   if (glow <= 0.01) return;
   ctx.save();
   setMat(ctx, world);
-  ctx.beginPath();
-  poly(ctx, sc.nasal);
-  ctx.fillStyle = `rgba(42,212,189,${(0.28 * glow).toFixed(3)})`;
-  ctx.fill();
-  ctx.beginPath();
-  poly(ctx, sc.port);
-  ctx.fillStyle = `rgba(42,212,189,${(0.4 * glow).toFixed(3)})`;
-  ctx.fill();
+  ctx.lineJoin = 'round';
+  // (each is a body of light with no edge of its own: a faint fill, and wider and wider strokes round it, each fainter)
+  for (const [p, rgb, fill] of [[sc.nasal, '42,212,189', 0.2], [sc.port, '42,212,189', 0.26]] as const) {
+    ctx.beginPath();
+    poly(ctx, p);
+    ctx.fillStyle = `rgba(${rgb},${(fill * glow).toFixed(3)})`;
+    ctx.fill();
+    for (const [w, a] of [[0.7, 0.035], [0.45, 0.05], [0.26, 0.065], [0.12, 0.08]]) {
+      ctx.lineWidth = w * sc.s;
+      ctx.strokeStyle = `rgba(${rgb},${(a * glow).toFixed(3)})`;
+      ctx.stroke();
+    }
+  }
   ctx.restore();
 }
 
@@ -431,8 +436,17 @@ export function paintTriangle(ctx: CanvasRenderingContext2D, world: Mat, p: numb
 
 /** The velum: soft palate muscle under a wet mucosa, lit from the mouth. Its outline has
  *  the oral side first (base to tip), then the nasal side back (tip to base). */
-function paintVelum(ctx: CanvasRenderingContext2D, v: number[], world: Mat, s: number, flecks: CanvasPattern | string): void {
-  const half = v.length / 4; // points per side
+function paintVelum(ctx: CanvasRenderingContext2D, v0: number[], world: Mat, s: number, flecks: CanvasPattern | string): void {
+  const half = v0.length / 4; // points per side
+  // (the body is drawn a little thicker toward the nose than the model's, which is the thin shell the air meets: it goes
+  // into the tissue behind it with no edge of its own, as the graphics card's velum does, gl.ts)
+  const GROW = 1.3;
+  const v = v0.slice();
+  for (let i = 0; i < half; i++) {
+    const o = [v0[2 * i], v0[2 * i + 1]], k = 2 * (2 * half - 1 - i);
+    v[k] = o[0] + (v0[k] - o[0]) * GROW;
+    v[k + 1] = o[1] + (v0[k + 1] - o[1]) * GROW;
+  }
   const oral = (i: number): [number, number] => [v[2 * i], v[2 * i + 1]];
   const nasal = (i: number): [number, number] => [v[2 * (2 * half - 1 - i)], v[2 * (2 * half - 1 - i) + 1]];
   const line = (f: (i: number) => [number, number], w = 0) => {
@@ -445,12 +459,13 @@ function paintVelum(ctx: CanvasRenderingContext2D, v: number[], world: Mat, s: n
   };
   ctx.save();
   setMat(ctx, world);
-  // lighter on the side of the mouth, darker towards the nose
+  // lighter on the side of the mouth, darker toward the nose, and gone into the tissue behind
   const m = half >> 1;
   const g = ctx.createLinearGradient(oral(m)[0], oral(m)[1], nasal(m)[0], nasal(m)[1]);
-  g.addColorStop(0, '#e48e9b');
-  g.addColorStop(0.5, '#c45d6d');
-  g.addColorStop(1, '#8b3646');
+  g.addColorStop(0, '#e88f98');
+  g.addColorStop(0.35, '#c45d6d');
+  g.addColorStop(0.72, 'rgba(120,42,58,0.75)');
+  g.addColorStop(1, 'rgba(100,30,45,0)');
   // the body, and the uvula's rounded end
   let turn = 0;
   for (let i = 0, n = v.length / 2; i < n; i++) {
@@ -469,7 +484,9 @@ function paintVelum(ctx: CanvasRenderingContext2D, v: number[], world: Mat, s: n
   body();
   ctx.fill('nonzero');
   ctx.fillStyle = flecks;
+  ctx.globalAlpha = 0.8;
   ctx.fill('nonzero');
+  ctx.globalAlpha = 1;
   // muscle fibres along it
   ctx.save();
   body();
@@ -477,20 +494,16 @@ function paintVelum(ctx: CanvasRenderingContext2D, v: number[], world: Mat, s: n
   ctx.lineWidth = 0.02 * s;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = 'rgba(255,212,220,0.22)';
-  for (const w of [0.28, 0.5, 0.72]) {
+  ctx.strokeStyle = 'rgba(255,212,220,0.2)';
+  for (const w of [0.2, 0.36, 0.52]) {
     line(oral, w);
     ctx.stroke();
   }
   ctx.restore();
-  // a darker edge towards the nose, a wet light on the side of the mouth
-  line(nasal);
-  ctx.lineWidth = 0.03 * s;
-  ctx.strokeStyle = 'rgba(80,20,30,0.5)';
-  ctx.stroke();
+  // a wet light on the side of the mouth
   line(oral);
   ctx.lineWidth = 0.05 * s;
-  ctx.strokeStyle = 'rgba(255,214,220,0.45)';
+  ctx.strokeStyle = 'rgba(255,214,220,0.4)';
   ctx.stroke();
   ctx.restore();
 }

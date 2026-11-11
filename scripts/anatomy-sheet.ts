@@ -8,7 +8,8 @@
  *   const { sheet, POSES } = await import('/scripts/anatomy-sheet.ts');
  *   await sheet(POSES, { cols: 5, cell: 340 });
  *
- * lays the sheet over the page (click it to take it away); `lines: true` draws over it what is taken out of the
+ * lays the sheet over the page (click it to take it away); `bare: true` shows the stretched plate with nothing taken
+ * out of it; `cavity: false` leaves the air clear; `lines: true` draws over it what is taken out of the
  * plate (blue), what is kept (yellow), what is taken off whatever is kept (magenta) and the teeth (green). Each pose is a name
  * and the articulators that differ from the default ones (or from the tutor's
  * rest, with `base: 'rest'`); `frame` is the part of the head shown, canonical
@@ -31,7 +32,7 @@ export const POSES: [string, Partial<Articulators>][] = [
 
 let gl: AnatomyGL | null | undefined;
 
-export async function sheet(poses: [string, Partial<Articulators>][], opts: { cols?: number; cell?: number; frame?: [number, number, number, number]; base?: 'rest' | 'default'; shrink?: number; lines?: boolean } = {}): Promise<HTMLCanvasElement | null> {
+export async function sheet(poses: [string, Partial<Articulators>][], opts: { cols?: number; cell?: number; frame?: [number, number, number, number]; base?: 'rest' | 'default'; shrink?: number; lines?: boolean; cavity?: boolean; bare?: boolean } = {}): Promise<HTMLCanvasElement | null> {
   let bd = getBackdrop();
   for (let i = 0; i < 50 && !(bd && bd.mask); i++) { await new Promise((r) => setTimeout(r, 100)); bd = getBackdrop(); }
   if (!bd?.mask) return null;
@@ -62,7 +63,7 @@ export async function sheet(poses: [string, Partial<Articulators>][], opts: { co
     const geom = computeGeometry(a, DEFAULT_ANATOMY, DEFAULT_TEETH);
     const sc = headScene(geom, DEFAULT_ANATOMY, a);
     const L = anatomyLayers(sc, geom);
-    gl.render(sc, world, cell, cell, { img: bd.img, mask: bd.mask }, L.cut, L.keep, { neck: [-1e6, -1e6 + 1] }, 1, L.clear, L.hard);
+    gl.render(sc, world, cell, cell, { img: bd.img, mask: bd.mask }, opts.bare ? [] : L.cut, opts.bare ? [] : L.keep, { neck: [-1e6, -1e6 + 1] }, 1, opts.bare ? [] : L.clear, opts.bare ? [] : L.hard, opts.cavity === false || opts.bare ? null : L.look);
     const x = (i % cols) * cell, y = Math.floor(i / cols) * cell;
     // (a picture of the graphics card's canvas is fetched back from it: slow, and fine for a sheet)
     g.drawImage(gl.cv, x, y);

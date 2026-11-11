@@ -5,6 +5,7 @@ import { PHONEMES } from '../src/dsp/speech/phonemes';
 import { headScene, guideHead, HeadScene, FILLED_AIR, FACE_PROFILE, FACE_UPPER, FACE_LOWER } from '../src/ui/head/scene';
 import { inPoly } from '../src/ui/head/warp';
 import { anatomyLayers } from '../src/ui/tutor/faces';
+import darkMap from './fixtures/plate-dark.json';
 
 const inside = (x: number, y: number, p: number[]) => inPoly(x, y, p);
 
@@ -44,19 +45,31 @@ function toEdge(x: number, y: number, p: number[]): number {
   return best;
 }
 
+/** Whether the painting is dark at a canonical point (what is left of its painted air, after scripts/anatomy-air.py has filled the thin marks of it with tissue). */
+function paintedDark(x: number, y: number): boolean {
+  const { x0, x1, y0, y1, step, rows } = darkMap as { x0: number; x1: number; y0: number; y1: number; step: number; rows: string[] };
+  if (x < x0 || x >= x1 || y <= y0 || y > y1) return false;
+  return rows[Math.floor((y1 - y) / step)][Math.floor((x - x0) / step)] === '1';
+}
+
 /**
  * Points of the plate's painted air that the sheet carries out of the air of this instant (nothing then covers
- * them). The painted air is the guide's air behind the upper incisor's edge (in front of it the grid's last lines
- * reach between the teeth and the lips, where the painting has lip and tooth) and above the hyoid (below it the
- * painting has only the narrow cleft behind the epiglottis, and the model moves the larynx's front by three points:
- * there a little painted air may stay where the model narrows the air further). A point within 0.8 mm of the air
- * is where the tongue lies against the roof of the mouth, and is not counted, nor one under the sheet's tissue,
- * which is drawn over its painted air.
+ * them) and that the painting still has dark: the app takes the air out of the plate and draws it as a cavity, and
+ * what dark of the painted air is left where the model has tissue (thin marks of it are filled with tissue in the
+ * painting itself) would show as a dark mark. The painted air is the guide's air behind the upper incisor's edge (in
+ * front of it the grid's last lines reach between the teeth and the lips, where the painting has lip and tooth) and
+ * above the hyoid (below it the painting has only the narrow cleft behind the epiglottis, and the model moves the
+ * larynx's front by three points: there a little painted air may stay where the model narrows the air further). A
+ * point within 0.8 mm of the air is where the tongue lies against the roof of the mouth, and is not counted, nor
+ * one under the sheet's tissue, which is drawn over its painted air.
  */
 function strandedAir(sc: HeadScene, geom: ReturnType<typeof computeGeometry>): [number, number][] {
   const G = guideHead();
   // (the air taken out as the views take it out, and the velum drawn over it)
-  const covers = [...anatomyLayers(sc, geom).cut, sc.velum].filter((p) => p.length >= 6);
+  // (all of the air's strips, thin ones too: where the walls all but touch the app leaves them uncut, and tissue lies there)
+  const strips: number[][] = [];
+  for (let i = 0; i + 3 < sc.lower.length; i += 2) strips.push([sc.lower[i], sc.lower[i + 1], sc.lower[i + 2], sc.lower[i + 3], sc.upper[i + 2], sc.upper[i + 3], sc.upper[i], sc.upper[i + 1]]);
+  const covers = [...anatomyLayers(sc, geom).cut, ...strips, sc.velum].filter((p) => p.length >= 6);
   // (and every cell of the sheet that is not painted air: those are drawn after the painted air, over it)
   const { warp: W, at: A } = sc.sheet();
   // (the cells in buckets of a few millimetres, by their bounds)
@@ -88,7 +101,9 @@ function strandedAir(sc: HeadScene, geom: ReturnType<typeof computeGeometry>): [
         const cx = lx + (ux - lx) * v, cy = ly + (uy - ly) * v;
         if (FILLED_AIR.some((p) => inside(cx, cy, p))) continue; // the painting has no air there
         const [x, y] = sc.warp(cx, cy);
-        if (!covers.some((p) => inside(x, y, p)) && !covers.some((p) => toEdge(x, y, p) < 0.08) && !underTissue(x, y)) out.push([x, y]);
+        // (in the narrow column of the throat the painting's dark is the crease between the wall and the spine, not painted air)
+        if (!(cx > -0.3 || cy > 8.2)) continue;
+        if (paintedDark(cx, cy) && !covers.some((p) => inside(x, y, p)) && !covers.some((p) => toEdge(x, y, p) < 0.08) && !underTissue(x, y)) out.push([x, y]);
       }
     }
   }
