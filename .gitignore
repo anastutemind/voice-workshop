@@ -8,3 +8,6 @@ tests/banned-names.local
 
 # raw takes of the AI voice (made again from scripts/tutor-voice.ts when missing)
 scripts/.tts-cache/
+
+# Kling answers, packed audio (made again by scripts/mirror-kling.ts)
+scripts/.kling/
