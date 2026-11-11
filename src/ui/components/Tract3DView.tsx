@@ -16,7 +16,7 @@ import type { Telemetry } from '../../dsp/engine/engine';
 import { FACE_LOWER, FACE_PROFILE, FACE_UPPER, headScene, HeadScene, Mat } from '../head/scene';
 import { Backdrop, getBackdrop } from '../head/painter';
 import { paintHead } from '../tutor/faces';
-import { azimuth, backdrop, BACKDROP_GLSL, lightRig, studioEnvironment } from '../three/studio';
+import { azimuth, backdrop, lightRig, studioEnvironment } from '../three/studio';
 import { hairShells, seamWeights, skinMaterials } from '../three/skin';
 import { eyeMaterial, eyeUniforms } from '../three/eyes';
 import { MouthParts, innerMaterial, mouthMaterials, teethShape } from '../three/mouth';
@@ -417,6 +417,7 @@ export default function Tract3DView() {
     const blankAlbedo = flat(150, 110, 95, THREE.SRGBColorSpace), blankDetail = flat(128, 140, 0, THREE.NoColorSpace);
     for (const m of [skin.material, skin.hairMaterial]) { m.map = blankAlbedo; m.roughnessMap = blankDetail; }
     skin.material.bumpMap = blankDetail;
+    const loader0 = new THREE.TextureLoader(), loader = loader0;
     const eyeMat = eyeMaterial(eyeU);
     // (the inside of the head, seen through a cut or the mouth's opening: flesh in the dark)
     const mouth = mouthMaterials(skin.uniforms);
@@ -427,22 +428,16 @@ export default function Tract3DView() {
     const eyeMesh = new THREE.Mesh(eyeGeo, eyeMat);
     const innerMesh = new THREE.Mesh(headGeo, innerMat);
     const hairMesh = new THREE.Mesh(new THREE.BufferGeometry(), skin.hairMaterial);
-    // (the end of the neck: a disc inside it, in the colour of the backdrop, so that seen from below the neck ends in nothing, and not in the hollow of the head)
-    const plugMat = new THREE.ShaderMaterial({
-      uniforms: { uAspect: skin.uniforms.uAspect, uRes: skin.uniforms.uRes }, side: THREE.DoubleSide,
-      vertexShader: 'void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ); }',
-      fragmentShader: `uniform vec2 uAspect; uniform vec2 uRes;\n${BACKDROP_GLSL}\nvoid main() { gl_FragColor = vec4( backdropColor( gl_FragCoord.xy / uRes * 2.0 - 1.0, uAspect, gl_FragCoord.xy ), 1.0 ); }`,
-    });
-    const plug = new THREE.Mesh(new THREE.CircleGeometry(1, 48), plugMat);
-    plug.rotation.x = -Math.PI / 2; plug.frustumCulled = false; plug.visible = false; plug.renderOrder = -0.95;
-    scene.add(plug);
     const headParts = [headMesh, eyeMesh, innerMesh, hairMesh];
     for (const m of headParts) { m.frustumCulled = false; m.visible = false; m.renderOrder = -1; scene.add(m); }
     hairMesh.renderOrder = -0.9;
+    loader0.load('head3d/iris.jpg', (tx) => {
+      tx.colorSpace = THREE.SRGBColorSpace; tx.anisotropy = 4; tx.needsUpdate = true;
+      eyeU.uIrisTex.value = tx; eyeU.uIrisMix.value = 0.96; dirty = true;
+    }, undefined, () => undefined);
     void loadScan(renderer).then((sn) => { scan = sn; dirty = true; });
     // (the skin is laid out as the scan's file lays out its texture: glTF's way up, not flipped)
     let skinReady = false;
-    const loader = new THREE.TextureLoader();
     loader.load('head3d/skin.jpg', (tx) => {
       tx.colorSpace = THREE.SRGBColorSpace; tx.flipY = false; tx.anisotropy = plateTex.anisotropy; tx.needsUpdate = true;
       skin.material.map = tx; skin.hairMaterial.map = tx; skinReady = true; dirty = true;
@@ -456,9 +451,13 @@ export default function Tract3DView() {
     let aoBytes: Uint8Array | null = null;
     void fetch('head3d/skin-ao.bin').then((r) => (r.ok ? r.arrayBuffer() : null)).then((b) => { if (b) { aoBytes = new Uint8Array(b); dirty = true; applyAo(); } }).catch(() => undefined);
     const applyAo = () => {
-      if (!head || !aoBytes || aoBytes.length !== 2 * head.count) return;
+      if (!head || !aoBytes || aoBytes.length !== 2 * head.base) return;
       const a = headGeo.attributes.aoThin.array as Float32Array;
-      for (let i = 0; i < head.count; i++) { a[3 * i] = aoBytes[2 * i] / 255; a[3 * i + 1] = aoBytes[2 * i + 1] / 255; }
+      for (let i = 0; i < head.count; i++) {
+        // (the points of the subdivision take the mean of their parents')
+        const p0 = head.parents[2 * i], p1 = head.parents[2 * i + 1];
+        for (let c = 0; c < 2; c++) a[3 * i + c] = (p0 < 0 ? aoBytes[2 * i + c] : 0.5 * (aoBytes[2 * p0 + c] + aoBytes[2 * p1 + c])) / 255;
+      }
       headGeo.attributes.aoThin.needsUpdate = true;
     };
     /** The head is made when the scan, its skin, the photograph of the side and the painting are all there. */
@@ -478,7 +477,7 @@ export default function Tract3DView() {
       g.setAttribute('facing', new THREE.BufferAttribute(head.facing, 3));
       g.setAttribute('kind', new THREE.BufferAttribute(head.kind, 1));
       g.setAttribute('uv', new THREE.BufferAttribute(head.uv, 2));
-      const ao = new Float32Array(3 * head.count), seam = seamWeights(head.index, head.same, head.count, scan.position.length / 3);
+      const ao = new Float32Array(3 * head.count), seam = seamWeights(head.index, head.same, head.count, scan.position.length / 3, 10);
       for (let i = 0; i < head.count; i++) { ao[3 * i] = 1; ao[3 * i + 2] = seam[i]; }
       g.setAttribute('aoThin', new THREE.BufferAttribute(ao, 3));
       seamSoft = seam;
@@ -624,7 +623,7 @@ export default function Tract3DView() {
     };
 
     /** The cut face and the body, for the posture that is shown: painted and placed when the head has moved, not more often than the eye needs. */
-    let painted = 0, paintDue = false, plugReady = false;
+    let painted = 0, paintDue = false;
     const paintPlate = () => {
       painted = performance.now();
       paintDue = false;
@@ -661,16 +660,6 @@ export default function Tract3DView() {
         skin.uniforms.uFade.value.set(sc.neckEnd + 0.3 * sc.s, sc.neckEnd + 3.6 * sc.s);
         skin.uniforms.uHairLen.value = 0.34 * sc.s;
         mouth.uniforms.uCutY.value = sc.neckEnd + 7.5 * sc.s;
-        {
-          // (the neck's own points at a little above its end: their reach is the disc's)
-          const yP = sc.neckEnd + 2.6 * sc.s, n0 = scan ? scan.position.length / 3 : head.count;
-          let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
-          for (let i = n0; i < head.count; i++) {
-            if (Math.abs(headPos[3 * i + 1] - yP) > 0.7 * sc.s) continue;
-            x0 = Math.min(x0, headPos[3 * i]); x1 = Math.max(x1, headPos[3 * i]); z0 = Math.min(z0, headPos[3 * i + 2]); z1 = Math.max(z1, headPos[3 * i + 2]);
-          }
-          if (x1 > x0) { plug.position.set(0.5 * (x0 + x1), yP, 0.5 * (z0 + z1)); plug.scale.set(0.52 * (x1 - x0), 0.52 * (z1 - z0), 1); plugReady = true; }
-        }
         for (const m of headParts) m.visible = true;
       }
       if (body) {
@@ -859,8 +848,6 @@ export default function Tract3DView() {
       // the scanned head is the skin; the half body raised from the silhouette stands in for it until it has come
       skinMesh.visible = !!body && plate.visible && o.tissues && !head;
       for (const m of headParts) m.visible = !!head && plate.visible && o.tissues;
-      // (only seen from below the end of the neck, where the eye looks up the neck)
-      plug.visible = plugReady && !o.cut && headMesh.visible && camera.position.y < (sc?.neckEnd ?? 0) + 3.6 * (sc?.s ?? 1);
       const clips = o.cut ? [clip] : [];
       for (const m of [skin.material, skin.hairMaterial, eyeMat, innerMat, mouth.teeth, mouth.tongue, mouth.cavity]) m.clippingPlanes = clips;
       teethMesh.visible = ownTeeth && headMesh.visible;
@@ -904,7 +891,7 @@ export default function Tract3DView() {
       for (const g of [ringGeo, hollowGeo, castGeo, plate.geometry, skinMesh.geometry, trayMesh.geometry, toothGeo]) g.dispose();
       for (const m of [wallMat, glassMat, plateMat, skinMat, trayMat, toothMat, gumMat, pouchMat, waterMat]) m.dispose();
       for (const m of gums) m.geometry.dispose();
-      plateTex.dispose(); skinTex.dispose(); blankAlbedo.dispose(); blankDetail.dispose(); plugMat.dispose(); plug.geometry.dispose(); skin.material.dispose(); skin.hairMaterial.dispose(); eyeMat.dispose(); innerMat.dispose(); headGeo.dispose(); eyeGeo.dispose(); hairMesh.geometry.dispose(); mouth.teeth.dispose(); mouth.tongue.dispose(); mouth.cavity.dispose(); mouthParts.dispose(); teethMesh.geometry.dispose();
+      plateTex.dispose(); skinTex.dispose(); blankAlbedo.dispose(); blankDetail.dispose(); skin.material.dispose(); skin.hairMaterial.dispose(); eyeMat.dispose(); innerMat.dispose(); headGeo.dispose(); eyeGeo.dispose(); hairMesh.geometry.dispose(); mouth.teeth.dispose(); mouth.tongue.dispose(); mouth.cavity.dispose(); mouthParts.dispose(); teethMesh.geometry.dispose();
       teeth.dispose();
       for (const m of pouchParts) m.geometry.dispose();
       scene.environment?.dispose();

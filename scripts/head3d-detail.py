@@ -1,11 +1,14 @@
 """
-Makes what the 3D head's skin shader reads besides its albedo (scripts/head3d-bake.py's skin.jpg, copied to public/head3d/skin.jpg):
+Finishes the bake of the 3D head's skin (scripts/head3d-bake.py's skin.jpg: the neck's colours are brought to the jaw's, and the result is
+written as public/head3d/skin.jpg) and makes what the skin shader reads besides its albedo:
 
   public/head3d/skin-detail.jpg   2048x2048, in the albedo's own layout:
                                     red    height (the bump): pores, the fine grain of the skin, stubble, the creases of the lips;
                                     green  roughness (shiny forehead, nose, lips; matte stubble, scalp, ears);
-                                    blue   hair (the buzz cut of the scalp with its soft hairline and its taper at the nape, the
-                                           brows, from the albedo's own darkness): where the hair shells grow and the scalp is dark;
+                                    blue   hair (the buzz cut: its hairline and its density read off the photographs of the man: the side
+                                           photograph public/skin/face.webp, in the painting's own frame, and the front photograph for the
+                                           forehead, whose hairline is found column by column; the nape is a V that tapers down the neck):
+                                           where the hair shells grow and the scalp is dark;
   public/head3d/skin-ao.bin       two bytes per point of the head: its cavity (ambient occlusion: rays over the hemisphere
                                   against the head's own triangles) and its thinness (how little flesh lies behind it: the ears, the
                                   wings of the nose, the lids), for the light that comes through.
@@ -14,7 +17,7 @@ Both are made from the head's mesh at rest, exported from the page in dev (see E
 canon.f32, uv.f32, index.u32, kind.f32, same.i32 into <mesh-dir>), and from the baked albedo. The point order of
 skin-ao.bin is the mesh's: the page ignores it if the head has another number of points.
 
-    venv/bin/python scripts/head3d-detail.py <mesh-dir> <the bake's skin.jpg> public/head3d
+    venv/bin/python scripts/head3d-detail.py <mesh-dir> <the bake's skin.jpg> public/head3d [detail|ao|all] [--front <front photo>]
 
 Needs numpy, pillow, opencv-python-headless.
 """
@@ -95,41 +98,140 @@ def fill(img, have, rounds=24):
     return img
 
 
-def hair_mask(x, y, z, noise=None):
-    """The buzz cut: where the hair is, by the elevation of a point over the middle of the head, round it (0 front, 90 the side, 180 the back)."""
+def otsu(v):
+    h, _ = np.histogram(v, 256, (0, 1))
+    p = h / max(h.sum(), 1)
+    w = np.cumsum(p)
+    m = np.cumsum(p * np.arange(256) / 255)
+    s = (m[-1] * w - m) ** 2 / np.maximum(w * (1 - w), 1e-9)
+    return float(np.argmax(s)) / 255
+
+
+SIDE_PHOTO = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'public', 'skin', 'face.webp')
+FRONT_SCALE, FRONT_SCALE_Y, FRONT_MID, FRONT_EYE_Y, FRONT_EYE_PX = 36.8, 35.3, 414.5, 16.7, 483  # the front photo: pixels to the head's centimetres (across: the eyes and the ears; up: the eyes and the chin)
+
+
+def side_density():
+    """The stubble of the side photograph, as the fraction of dark hair in a 1.5 mm neighbourhood, in the painting's frame (64 px to the cm)."""
+    a = np.asarray(Image.open(SIDE_PHOTO).convert('RGBA'), np.float32) / 255
+    al = a[..., 3]
+    hh, ww = al.shape
+    yy, xx = np.mgrid[0:hh, 0:ww]
+    X, Y = xx / 64.0 - 11, 29 - yy / 64.0
+    L = cv2.GaussianBlur(lum(a[..., :3]), (0, 0), 2)
+    # (not the brow, the eye and the face below them; not the ear)
+    reg = (al > 0.9) & (Y > 15.6) & ~((X > 2.8) & (Y < 21.5)) & ~((X > -9) & (X < -2.6) & (Y < 17.6) & (Y > 8))
+    T = otsu(L[reg])
+    prob = (1 / (1 + np.exp(-(T - L) / 0.035))) * reg
+    return cv2.GaussianBlur(prob.astype(np.float32), (0, 0), 9)
+
+
+def front_hairline(path):
+    """The hairline of the front photograph: for each distance z from the middle, the height where the skin of the forehead gives
+    way to hair (going up from the brows, or from the eye's height at the temples), smoothed to what a hand would draw."""
+    f = np.asarray(Image.open(path).convert('RGB'), np.float32) / 255
+    L = cv2.GaussianBlur(lum(f), (0, 0), 3.5)
+    reg = lambda Z, Yc: (Yc > 17.0) & (Yc < 28.2) & (np.abs(Z) < 9.2)
+    yy, xx = np.mgrid[0:f.shape[0], 0:f.shape[1]]
+    Zg, Yg = (xx - FRONT_MID) / FRONT_SCALE, FRONT_EYE_Y - (yy - FRONT_EYE_PX) / FRONT_SCALE_Y
+    T = otsu(L[reg(Zg, Yg) & (L > 0.085)]) + 0.02
+    zs = np.arange(-9.0, 9.01, 0.1)
+    out = np.zeros(len(zs))
+    for i, zc in enumerate(zs):
+        px = int(round(FRONT_MID + zc * FRONT_SCALE))
+        y0 = 21.9 if abs(zc) < 6.6 else 17.3
+        y = y0
+        while y < 28.0:
+            py = int(round(FRONT_EYE_PX - (y - FRONT_EYE_Y) * FRONT_SCALE_Y))
+            if 0 <= py < L.shape[0] and 0 <= px < L.shape[1] and L[py, px] < T:
+                break
+            y += 0.05
+        out[i] = y
+    # (the face is the same on both sides: the mean of the two; and the line over the forehead is an arch, which a smooth even curve
+    # through what was found draws, without the notches that the shine of the forehead makes in it)
+    out = 0.5 * (out + out[::-1])
+    near = np.abs(zs) <= 6.0
+    zz = np.minimum(np.abs(zs), 6.0)
+    basis = lambda t: np.stack([np.ones_like(t), t ** 2, t ** 4], 1)
+    coef = np.linalg.lstsq(basis(np.abs(zs[near])), out[near], rcond=None)[0]
+    fit = basis(zz) @ coef
+    fit = np.where(np.abs(zs) > 6.0, fit - 4.8 * (np.abs(zs) - 6.0) / 1.0, fit)
+    return zs, np.clip(fit, 17.3, 26.0)
+
+
+def hair_mask(x, y, z, n, side, hl):
+    """The buzz cut, where the photographs have it: the side photograph's density on the faces that look to the side or up, the front
+    photograph's hairline on those that look forward (blended by which way they face), the V of the nape behind."""
     az = np.abs(z)
-    vx, vy = x + 0.5, y - 15.5
-    r = np.sqrt(vx * vx + vy * vy + az * az) + 1e-6
-    phi = np.degrees(np.arcsin(np.clip(vy / r, -1, 1)))
-    theta = np.degrees(np.arctan2(az, vx))
-    th = [0, 30, 50, 66, 80, 88, 100, 115, 130, 150, 180]
-    ph = [46, 43, 31, 21, 11, 5, 9, 8, -3, -24, -44]
-    line = np.interp(theta, th, ph)
-    soft = np.where(theta > 125, 12.0, 3.2)
-    # (a lived-in hairline: it wanders by a few degrees, it is not a ruled line)
-    wander = noise[..., 0] if noise is not None else 0
-    m = smooth(line - soft + wander, line + soft + wander, phi)
+    sx = np.clip((x + 11) * 64, 0, side.shape[1] - 1).astype(np.float32)
+    sy = np.clip((29 - y) * 64, 0, side.shape[0] - 1).astype(np.float32)
+    hs = cv2.remap(side, sx, sy, cv2.INTER_LINEAR)
+    # (the photograph ends at the top of the head: above it is hair all the same)
+    hs = np.maximum(hs, smooth(24.6, 25.8, y) * smooth(10.0, 8.5, x))
+    zs, yh = hl
+    yline = np.interp(az, np.abs(zs[zs >= 0]), yh[zs >= 0])
+    # (a soft fade of about 3 mm from skin to stubble, over the front photograph's own line)
+    hf = smooth(yline - 0.18, yline + 0.2, y)
+    # (the front photograph's line is the forehead's: toward the sides it shows the hair of the side of the head seen from the front)
+    far = smooth(4.5, 6.5, az)
+    wf = np.clip(n[..., 0], 0, 1) ** 2 * (1 - far)
+    ws = np.clip(np.abs(n[..., 2]), 0, 1) ** 1.5 + np.clip(n[..., 1], 0, 1) ** 1.5 + far
+    m = (ws * hs + wf * hf) / (ws + wf + 1e-6)
     # the nape: a V that tapers down the neck, by height alone (the neck grows straight down from the skull's edge, and the angle jumps there)
     yb = 8.0 + 0.45 * np.minimum(az, 4.0)
-    back = smooth(yb - 2.8 + 0.4 * wander, yb + 2.8 + 0.4 * wander, y)
-    wb = smooth(-6.0, -8.4, x) * (theta > 112)
-    m = m * (1 - wb) + back * wb
-    # (a lived-in hairline: it is not a ruled line, the strands take over a little at a time)
-    return m
+    back = smooth(yb - 2.8, yb + 2.8, y)
+    wb = smooth(-5.6, -7.6, x)
+    return m * (1 - wb) + back * wb
 
 
 def lum(rgb):
     return 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
 
 
-def detail(mesh, albedo_path, out):
+def match_neck(rgb, x, y, z, have, hair):
+    """The neck's piece of the picture is paler and more orange than the jaw it grows from, and where they meet it shows as a seam.
+    Its colours are brought to the jaw's (the mean wholly, the spread by half), a hand's work with the colour curves."""
+    nk = np.zeros((W, W), bool)
+    nk[int(0.012 * W):int(0.25 * W), int(0.012 * W):int(0.47 * W)] = True
+    nk &= have
+    jaw = have & (y > 3.0) & (y < 8.5) & (np.abs(z) < 6.0) & (x > 2.0) & (hair < 0.1) & ~nk
+    if nk.sum() < 1000 or jaw.sum() < 1000:
+        return rgb
+    out = rgb.copy()
+    mt, st = rgb[jaw].mean(0), rgb[jaw].std(0) + 1e-4
+    mn, sn = rgb[nk].mean(0), rgb[nk].std(0) + 1e-4
+    k = 0.5 * (1 + st / sn)
+    matched = mt + (rgb - mn) * k
+    out[nk] = matched[nk]
+    # the middle of the neck, in front, was seen by no photograph squarely: it is a smooth blur of the colours round it. It is given
+    # the grain of the neck's own textured parts (the wings of the unrolled neck): their fine detail, tiled over the blur.
+    L = lum(out)
+    energy = cv2.GaussianBlur(np.abs(L - cv2.GaussianBlur(L, (0, 0), 2.5)), (0, 0), 7)
+    flat = (1 - smooth(0.0055, 0.0095, energy)) * nk
+    flat = cv2.GaussianBlur(flat.astype(np.float32), (0, 0), 3)
+    src = out[int(0.06 * W):int(0.2 * W), int(0.385 * W):int(0.455 * W)]
+    detail_src = src - cv2.GaussianBlur(src, (0, 0), 9)
+    h, w = detail_src.shape[:2]
+    tile = np.concatenate([np.concatenate([detail_src, detail_src[:, ::-1]], 1)] * (W // (2 * w) + 2), 1)
+    tile = np.concatenate([tile, tile[::-1]] * (W // (2 * h) + 2), 0)[:W, :W]
+    soft = cv2.GaussianBlur(out, (0, 0), 7)
+    grained = soft + 1.3 * tile
+    out = out * (1 - flat[..., None]) + grained * flat[..., None]
+    return np.clip(out, 0, 1)
+
+
+def detail(mesh, albedo_path, out, front):
     canon, uv, index, kind, same = mesh
     keep = index[(kind[index[:, 0]] == 0)]
-    attr = canon
-    pos, have = raster(uv, keep, attr, W)
+    nrm = normals(canon, index, same)
+    pos, have = raster(uv, keep, np.hstack([canon, nrm]), W)
     x, y, z = pos[..., 0], pos[..., 1], pos[..., 2]
+    nn = pos[..., 3:6] / np.maximum(np.linalg.norm(pos[..., 3:6], axis=2, keepdims=True), 1e-9)
     az = np.abs(z)
     rgb = np.asarray(Image.open(albedo_path).convert('RGB').resize((W, W), Image.LANCZOS), np.float32) / 255.0
+    hair0 = hair_mask(x, y, z, nn, side_density(), front_hairline(front))
+    rgb = match_neck(rgb, x, y, z, have, hair0)
+    Image.fromarray(np.clip(rgb * 255 + 0.5, 0, 255).astype(np.uint8)).save(os.path.join(out, 'skin.jpg'), quality=92, subsampling=0)
     L = lum(rgb)
     # ---- height: the albedo's own fine grain (its photographs' pores and stubble), and a pore pattern where there is skin
     hp1 = L - cv2.GaussianBlur(L, (0, 0), 1.6)
@@ -161,16 +263,14 @@ def detail(mesh, albedo_path, out):
     rough -= 0.20 * tzone
     rough -= 0.2 * nose * smooth(2.8, 1.2, az)                                         # the bridge, the tip and the wings of the nose
     rough -= 0.06 * smooth(5.0, 7.0, az) * smooth(12.0, 15.5, y) * smooth(2.0, 5.0, x)  # the cheekbones
-    rough -= 0.30 * lips                                                               # lips: wet
+    rough -= 0.22 * lips                                                               # lips: wet
     beard = smooth(12.5, 10.0, y) * smooth(2.0, 5.0, x) * (1 - lips)
     rough += 0.14 * beard
     # pits and dark hairs are rougher, a little shiny where the albedo is smooth
     rough += 0.22 * pits * pore_amp * (1 - lips) - 0.12 * hp2 * 4.0
     rough += 0.04 * (cv2.GaussianBlur(rng.random((W, W)).astype(np.float32), (0, 0), 24) - 0.5) * 10
     # ---- hair
-    wob = cv2.GaussianBlur(rng.standard_normal((W, W)).astype(np.float32), (0, 0), 14)
-    wob = (wob / wob.std() * 1.0)[..., None]
-    hair = hair_mask(x, y, z, wob)
+    hair = hair_mask(x, y, z, nn, side_density(), front_hairline(front))
     scalp = np.asarray(hair, np.float32)
     # the brows: where the albedo is dark enough over the brow's place (a box over each eye, up to where the lid begins)
     inbrow = smooth(17.4, 18.0, y) * smooth(21.0, 20.0, y) * smooth(0.4, 1.0, az) * smooth(8.2, 7.2, az) * smooth(4.0, 5.5, x)
@@ -250,8 +350,9 @@ def ao_bake(mesh, out, rays=72, reach=2.6):
 
 if __name__ == '__main__':
     mesh = load(sys.argv[1])
-    only = sys.argv[4] if len(sys.argv) > 4 else 'all'
+    only = sys.argv[4] if len(sys.argv) > 4 and not sys.argv[4].startswith('--') else 'all'
+    front = sys.argv[sys.argv.index('--front') + 1] if '--front' in sys.argv else '/private/tmp/claude-501/vw-shared/front-full-generated.png'
     if only in ('all', 'detail'):
-        detail(mesh, sys.argv[2], sys.argv[3])
+        detail(mesh, sys.argv[2], sys.argv[3], front)
     if only in ('all', 'ao'):
         ao_bake(mesh, sys.argv[3])

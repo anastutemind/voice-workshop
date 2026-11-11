@@ -50,18 +50,21 @@ export function eyeMaterial(u: EyeUniforms): THREE.MeshPhysicalMaterial {
       vec4 E = vCanon.z < 0.0 ? uEyeL : uEyeR;
       float side = vCanon.z < 0.0 ? -1.0 : 1.0;
       vec3 e = normalize( vCanon - E.xyz );
-      // where he looks: ahead, a little down; toward the eye of the view by half the way, within 15 degrees each way
+      // where he looks: with the iris in the middle of the lids' opening (the scan's opening lies a little below its eyeball's
+      // axis and a little outward: measured by casting rays from each eye's middle), and toward the eye of the view by half the
+      // way, within 15 degrees each way: he looks at whoever looks at him
       vec3 toEye = normalize( uLook - E.xyz );
       float facing = smoothstep( -0.1, 0.45, toEye.x );
-      float yaw = clamp( 0.55 * atan( toEye.z, toEye.x ), -0.262, 0.262 ) * facing - 0.012 * side;
-      float pitch = -0.035 + clamp( 0.5 * asin( clamp( toEye.y, -1.0, 1.0 ) ), -0.2, 0.2 ) * facing;
+      vec2 rest = side < 0.0 ? vec2( -0.117, -0.19 ) : vec2( 0.064, -0.19 );
+      float yaw = rest.x + clamp( 0.55 * atan( toEye.z, toEye.x ), -0.262, 0.262 ) * facing;
+      float pitch = rest.y + clamp( 0.5 * asin( clamp( toEye.y, -1.0, 1.0 ) ), -0.2, 0.2 ) * facing;
       vec3 look = normalize( vec3( cos( pitch ) * cos( yaw ), sin( pitch ), cos( pitch ) * sin( yaw ) ) );
       float th = acos( clamp( dot( e, look ), -1.0, 1.0 ) );
       vec3 a1 = normalize( cross( look, vec3( 0.0, 1.0, 0.0 ) ) ), a2 = cross( a1, look );
       float ang = atan( dot( e, a2 ), dot( e, a1 ) );
-      float irisR = asin( min( 0.95, 0.64 / E.w ) );
+      float irisR = asin( min( 0.95, 0.78 / E.w ) );
       float t = th / irisR;
-      float pupil = 0.36 + 0.03 * sin( ang * 3.0 );
+      float pupil = 0.33 + 0.02 * sin( ang * 3.0 );
       // ----- iris
       vec2 pq = vec2( cos( ang ), sin( ang ) ) * t;
       float fib = vn( vec2( ang * 22.0, t * 3.0 ) ) * 0.6 + vn( vec2( ang * 53.0, t * 9.0 + 4.0 ) ) * 0.4;
@@ -73,8 +76,8 @@ export function eyeMaterial(u: EyeUniforms): THREE.MeshPhysicalMaterial {
       ir = mix( ir, vec3( 0.02, 0.011, 0.007 ), 0.7 * smoothstep( 0.62, 1.0, t ) );
       ir *= 1.0 - 0.45 * smoothstep( 0.9, 1.04, t );
       if ( uIrisMix > 0.0 ) {
-        vec3 ph = texture2D( uIrisTex, 0.5 + 0.5 * pq * 0.96 ).rgb;
-        ir = mix( ir, ph, uIrisMix * smoothstep( 1.0, 0.94, t ) );
+        vec3 ph = texture2D( uIrisTex, 0.5 + 0.5 * pq * 0.96 ).rgb * 0.9;
+        ir = mix( ir, ph, uIrisMix * smoothstep( 1.0, 0.93, t ) );
       }
       ir = mix( vec3( 0.002 ), ir, smoothstep( pupil - 0.025, pupil + 0.025, t ) );
       // ----- the white: warm, shadowed by the lids, pink at the corners, a few veins that run to the iris

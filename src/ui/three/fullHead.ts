@@ -311,6 +311,9 @@ export interface Head {
   eyes: [number, number, number, number][];
   /** the teeth (see `Teeth`), or null if the scan has none */
   teeth: Teeth | null;
+  /** how many of the points are the scan's own (and its grown neck): the rest are the midpoints of the subdivision, each with its two parents here (-1 for the others) */
+  base: number;
+  parents: Int32Array;
 }
 
 /**
@@ -725,7 +728,127 @@ export function buildHead(scan: Scan, outline: ReturnType<typeof paintingOutline
     for (let i = scan.skin; i < n0; i++) if (side * canon[3 * i + 2] > 0) front = Math.max(front, canon[3 * i] - cx);
     if (r > 0.5 && r < 4) eyes[k] = [cx, cy, cz, front > 0.5 && front < 4 ? front : r];
   }
-  return { count, canon, facing, index: tri, weight, lipLow, lipShare, lipAtU, lipAtL, kind, same: one, eyes, uv, teeth: scan.teeth ? buildTeeth(scan.teeth, warp) : null };
+  if (rim.length > 8) softenSeam(canon, tri, one, count, rim.map((v) => one[v]));
+  openLids(canon, n0, scan.skin, eyes);
+  const coarse: Head = { count, canon, facing, index: tri, weight, lipLow, lipShare, lipAtU, lipAtL, kind, same: one, eyes, uv, teeth: scan.teeth ? buildTeeth(scan.teeth, warp) : null, base: count, parents: new Int32Array(2 * count).fill(-1) };
+  return subdivide(coarse);
+}
+
+/**
+ * Where the grown neck meets the scan's open edge the surface has a crease (the jaw's edge, the neck's first ring), which the light
+ * finds as a pale line. The points within a few rings of the seam are drawn toward the mean of their neighbours, more the nearer
+ * they are, so that the crease is a round fold (points at one place move as one).
+ */
+function softenSeam(canon: Float32Array, index: Uint32Array, one: Int32Array, count: number, rimRoots: number[]): void {
+  const nb: Set<number>[] = Array.from({ length: count }, () => new Set());
+  for (let t = 0; t < index.length; t += 3) for (let k = 0; k < 3; k++) { const a = one[index[t + k]], b = one[index[t + (k + 1) % 3]]; if (a !== b) { nb[a].add(b); nb[b].add(a); } }
+  const RINGS = 6, d = new Int8Array(count).fill(-1);
+  let front: number[] = [...new Set(rimRoots)];
+  for (const r of front) d[r] = 0;
+  for (let step = 1; step <= RINGS && front.length; step++) {
+    const nxt: number[] = [];
+    for (const v of front) for (const u of nb[v]) if (d[u] < 0) { d[u] = step; nxt.push(u); }
+    front = nxt;
+  }
+  const next = new Float32Array(canon.length);
+  for (let pass = 0; pass < 8; pass++) {
+    next.set(canon);
+    for (let i = 0; i < count; i++) {
+      if (one[i] !== i || d[i] < 0 || !nb[i].size) continue;
+      const w = 0.55 * (1 - d[i] / (RINGS + 1));
+      let mx = 0, my = 0, mz = 0;
+      for (const j of nb[i]) { mx += canon[3 * j]; my += canon[3 * j + 1]; mz += canon[3 * j + 2]; }
+      const k = nb[i].size;
+      next[3 * i] = canon[3 * i] + w * (mx / k - canon[3 * i]); next[3 * i + 1] = canon[3 * i + 1] + w * (my / k - canon[3 * i + 1]); next[3 * i + 2] = canon[3 * i + 2] + w * (mz / k - canon[3 * i + 2]);
+    }
+    for (let i = 0; i < count; i++) { const r = one[i]; canon[3 * i] = next[3 * r]; canon[3 * i + 1] = next[3 * r + 1]; canon[3 * i + 2] = next[3 * r + 2]; }
+  }
+}
+
+/**
+ * The scan's lids are a slit: seen from the front its opening is 27 degrees high (measured by casting rays from the middle of
+ * each eyeball and seeing which get out), a little less than the iris is wide, and the opening lies 12 degrees below the
+ * eyeball's own axis. The lids are opened by lifting the upper one 5 degrees (the skin above it, with its crease, follows less
+ * and less up to the brow) and dropping the lower one 2, so that the eyes are open as an awake man's are.
+ */
+function openLids(canon: Float32Array, n0: number, skinCount: number, eyes: [number, number, number, number][]): void {
+  const sm = (t: number) => { const u = Math.max(0, Math.min(1, t)); return u * u * (3 - 2 * u); };
+  const deg = Math.PI / 180;
+  eyes.forEach(([cx, cy, cz, R], k) => {
+    const side = k === 0 ? -1 : 1, yaw0 = (k === 0 ? -9 : 1) * deg;
+    for (let i = 0; i < n0 && i < skinCount; i++) {
+      const dx = canon[3 * i] - cx, dy = canon[3 * i + 1] - cy, dz = canon[3 * i + 2] - cz, r = Math.hypot(dx, dy, dz);
+      if (r < 0.8 * R || r > 1.75 * R || dx < 0.1 * R || dz * side < -1.2 * R) continue;
+      const yaw = Math.atan2(dz, dx), p = Math.asin(dy / r) / deg;
+      const lat = sm((62 * deg - Math.abs(yaw - yaw0)) / (30 * deg)) * sm((1.75 * R - r) / (0.5 * R));
+      // (the upper lid, from its edge up to the brow; the lower, from its edge down the cheek)
+      const dP = p > -8 ? 5 * sm((44 - p) / 38) : -2 * sm((p + 52) / 26);
+      const q = (p + dP * lat) * deg;
+      canon[3 * i] = cx + r * Math.cos(q) * Math.cos(yaw);
+      canon[3 * i + 1] = cy + r * Math.sin(q);
+      canon[3 * i + 2] = cz + r * Math.cos(q) * Math.sin(yaw);
+    }
+  });
+}
+
+/**
+ * The head's skin, once subdivided: every triangle of the skin becomes four. The new point on an edge lies where a
+ * cubic through the edge's end points, tangent to the surface there (the points' normals), would pass (a point-normal
+ * triangle's edge: the old points stay where they are, and the surface between them is round, not flat), and takes the mean
+ * of its two ends' texture coordinates, shares, lip places and the rest. Where one piece of the scan ends and the next
+ * begins (two points at one place) the two new points are at one place too, and are one point for the shading.
+ * The eyeballs and the cut end of the neck are left as they are.
+ */
+function subdivide(h: Head): Head {
+  const n = h.count, { canon, facing, weight, lipLow, lipShare, lipAtU, lipAtL, kind, uv, same } = h;
+  const skin = (t: number) => kind[h.index[t]] === 0 && kind[h.index[t + 1]] === 0 && kind[h.index[t + 2]] === 0;
+  const edges = new Map<number, number>(), roots = new Map<number, number>();
+  const nv: { a: number; b: number }[] = [];
+  const mid = (a: number, b: number): number => {
+    const key = a < b ? a * n + b : b * n + a, got = edges.get(key);
+    if (got !== undefined) return got;
+    const v = n + nv.length;
+    nv.push({ a, b });
+    edges.set(key, v);
+    return v;
+  };
+  const tris: number[] = [];
+  for (let t = 0; t < h.index.length; t += 3) {
+    const a = h.index[t], b = h.index[t + 1], c = h.index[t + 2];
+    if (!skin(t)) { tris.push(a, b, c); continue; }
+    const ab = mid(a, b), bc = mid(b, c), ca = mid(c, a);
+    tris.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca);
+  }
+  const m = n + nv.length;
+  const out = {
+    canon: new Float32Array(3 * m), facing: new Float32Array(3 * m), weight: new Float32Array(m), lipLow: new Float32Array(m), lipShare: new Float32Array(m),
+    lipAtU: new Float32Array(m), lipAtL: new Float32Array(m), kind: new Float32Array(m), uv: new Float32Array(2 * m), same: new Int32Array(m), parents: new Int32Array(2 * m).fill(-1),
+  };
+  out.canon.set(canon); out.facing.set(facing); out.weight.set(weight); out.lipLow.set(lipLow); out.lipShare.set(lipShare); out.lipAtU.set(lipAtU); out.lipAtL.set(lipAtL);
+  out.kind.set(kind); out.uv.set(uv); out.same.set(same);
+  for (let k = 0; k < nv.length; k++) {
+    const v = n + k, { a, b } = nv[k];
+    out.parents[2 * v] = a; out.parents[2 * v + 1] = b;
+    const dx = canon[3 * b] - canon[3 * a], dy = canon[3 * b + 1] - canon[3 * a + 1], dz = canon[3 * b + 2] - canon[3 * a + 2];
+    const na = [facing[3 * a], facing[3 * a + 1], facing[3 * a + 2]], nb = [facing[3 * b], facing[3 * b + 1], facing[3 * b + 2]];
+    const da = na[0] * dx + na[1] * dy + na[2] * dz, db = nb[0] * dx + nb[1] * dy + nb[2] * dz;
+    let ox = (db * nb[0] - da * na[0]) / 8, oy = (db * nb[1] - da * na[1]) / 8, oz = (db * nb[2] - da * na[2]) / 8;
+    const ol = Math.hypot(ox, oy, oz), cap = 0.22 * Math.hypot(dx, dy, dz);
+    if (ol > cap) { const f = cap / ol; ox *= f; oy *= f; oz *= f; }
+    out.canon[3 * v] = 0.5 * (canon[3 * a] + canon[3 * b]) + ox; out.canon[3 * v + 1] = 0.5 * (canon[3 * a + 1] + canon[3 * b + 1]) + oy; out.canon[3 * v + 2] = 0.5 * (canon[3 * a + 2] + canon[3 * b + 2]) + oz;
+    let fx = na[0] + nb[0], fy = na[1] + nb[1], fz = na[2] + nb[2];
+    const fl = Math.hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+    out.facing[3 * v] = fx; out.facing[3 * v + 1] = fy; out.facing[3 * v + 2] = fz;
+    out.weight[v] = 0.5 * (weight[a] + weight[b]); out.lipLow[v] = 0.5 * (lipLow[a] + lipLow[b]); out.lipShare[v] = 0.5 * (lipShare[a] + lipShare[b]);
+    out.lipAtU[v] = lipAtU[a] >= 0 && lipAtU[b] >= 0 ? 0.5 * (lipAtU[a] + lipAtU[b]) : Math.max(lipAtU[a], lipAtU[b]);
+    out.lipAtL[v] = lipAtL[a] >= 0 && lipAtL[b] >= 0 ? 0.5 * (lipAtL[a] + lipAtL[b]) : Math.max(lipAtL[a], lipAtL[b]);
+    out.kind[v] = kind[a];
+    out.uv[2 * v] = 0.5 * (uv[2 * a] + uv[2 * b]); out.uv[2 * v + 1] = 0.5 * (uv[2 * a + 1] + uv[2 * b + 1]);
+    // (the same place on the other side of a seam is the same point for the shading)
+    const sa = same[a], sb = same[b], key = sa < sb ? sa * n + sb : sb * n + sa, r = roots.get(key);
+    if (r === undefined) { roots.set(key, v); out.same[v] = v; } else out.same[v] = r;
+  }
+  return { ...h, count: m, canon: out.canon, facing: out.facing, index: Uint32Array.from(tris), weight: out.weight, lipLow: out.lipLow, lipShare: out.lipShare, lipAtU: out.lipAtU, lipAtL: out.lipAtL, kind: out.kind, uv: out.uv, same: out.same, base: n, parents: out.parents };
 }
 
 /** The teeth (see `Teeth`): the scan's upper row and a lower row made from it, bent as the head is. */
@@ -773,7 +896,7 @@ export function placeTeeth(teeth: Teeth, bite: Float32Array, sc: HeadScene, out:
   for (let v = 0; v < n; v++) {
     const q = lower[v] ? sc.place(bite[2 * v], bite[2 * v + 1], 1) : sc.place(canon[3 * v], canon[3 * v + 1], 0);
     // (a little back from where the scan has them: shut, the lips cover the edges of the teeth)
-    out[3 * v] = q[0] - 0.14 * s; out[3 * v + 1] = q[1]; out[3 * v + 2] = canon[3 * v + 2] * s;
+    out[3 * v] = q[0] - 0.3 * s; out[3 * v + 1] = q[1]; out[3 * v + 2] = canon[3 * v + 2] * s;
   }
 }
 
