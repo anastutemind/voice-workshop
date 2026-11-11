@@ -52,3 +52,9 @@ Bannaflak, as distributed with the three.js examples
 `facecap.glb`). `public/basis/` holds the Basis Universal texture transcoder
 that ships with three.js (`examples/jsm/libs/basis`, Apache-2.0), needed to
 read the model's textures.
+
+**The licence of `facecap.glb` is not verified.** The three.js repository carries the file with a "model by Face Cap" credit line in its
+examples (`webgl_morphtargets_face.html`) and states no licence for it (its MIT licence covers the code), and the Face Cap page
+(https://www.bannaflak.com/face-cap) states none either. Confirm the terms with its author before this repository is published or the model
+is redistributed. The 3D tract view's whole head (`src/ui/three/fullHead.ts`) is this scan, bent onto the painted head; its skin
+(`public/head3d/skin.jpg`, `skin-detail.jpg`, `skin-ao.bin`) is made for this project (`scripts/head3d-bake.py`, `scripts/head3d-detail.py`).
