@@ -16,14 +16,15 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
+import { falKey } from './falClient';
 
 const [model, paramsPath, outDir, name = 'out'] = process.argv.slice(2);
 if (!model || !paramsPath || !outDir) {
   console.error('usage: npx tsx scripts/fal.ts <model-id> <params.json> <out-dir> [name]');
   process.exit(2);
 }
-const key = process.env.FAL_KEY ?? process.env.FAL_API_KEY;
-if (!key) { console.error('FAL_KEY is not set'); process.exit(2); }
+const key = falKey();
+if (!key) { console.error('no fal.ai key: put it in ~/.config/voice-workshop/fal.key or FAL_KEY'); process.exit(2); }
 
 const MIME: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.mp3': 'audio/mpeg', '.mp4': 'video/mp4' };
 /** local files named "@path" become data URIs */

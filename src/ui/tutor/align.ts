@@ -58,6 +58,8 @@ export interface Frames {
   db?: Float32Array;
   /** how much the sound repeats itself at a pitch of a voice (80 to 400 Hz), 0 (noise: a puff of air, a hiss) to 1 (a voice): the air after a t sounds like an i above 3500 Hz, never at its pitch */
   voice?: Float32Array;
+  /** how bright the sound is: the energy between 1000 and 4000 Hz against that between 80 and 1000, in decibels. A vowel is bright and an m or an n dark; but how much differs from voice to voice, so only what a recording has against its own vowels counts (see `cut`) */
+  tilt?: Float32Array;
 }
 
 /**
@@ -101,6 +103,8 @@ export function listen(x: ArrayLike<number>, fs: number): Frames {
   // (and the band just under it: all the ring of an u or an o is there, below 1000 Hz, and none of a hum's)
   const lowMid = twice(twice(twice(all, 'hp', 450), 'hp', 450), 'lp', 1200);
   const high = twice(all, 'hp', 3500);
+  const dark = twice(twice(all, 'lp', 1000), 'lp', 1000);
+  const bright = twice(twice(twice(all, 'hp', 1000), 'hp', 1000), 'lp', 4000);
   const hop = Math.max(1, Math.round(fs * HOP)), win = Math.max(hop, Math.round(fs * 0.02));
   const n = Math.max(1, Math.floor(x.length / hop));
   const power = (v: Float32Array) => {
@@ -113,16 +117,17 @@ export function listen(x: ArrayLike<number>, fs: number): Frames {
     }
     return out;
   };
-  const pa = power(all), pm = power(mid), pl = power(lowMid), ph = power(high);
+  const pa = power(all), pm = power(mid), pl = power(lowMid), ph = power(high), pd = power(dark), pb = power(bright);
   let peak = 1e-12;
   for (let i = 0; i < n; i++) if (pa[i] > peak) peak = pa[i];
-  const f: Frames = { n, loud: new Float32Array(n), mid: new Float32Array(n), high: new Float32Array(n), db: new Float32Array(n), voice: voicing(all, fs, n, hop) };
+  const f: Frames = { n, loud: new Float32Array(n), mid: new Float32Array(n), high: new Float32Array(n), db: new Float32Array(n), voice: voicing(all, fs, n, hop), tilt: new Float32Array(n) };
   for (let i = 0; i < n; i++) {
     f.db![i] = 10 * Math.log10(pa[i] / peak + 1e-12);
     f.loud[i] = clamp01((10 * Math.log10(pa[i] / peak + 1e-9) + 45) / 45);
     // (shares on a scale of decibels: a thousandth of the sound is 0, all of it 1; an ear hears a ring thirty times weaker than the hum under it)
     f.mid[i] = Math.max(share(pm[i], pa[i], peak), share(pl[i], pa[i], peak));
     f.high[i] = share(ph[i], pa[i], peak);
+    f.tilt![i] = 10 * Math.log10((pb[i] + peak * 1e-8) / (pd[i] + peak * 1e-8));
   }
   return f;
 }
@@ -137,21 +142,21 @@ interface Kind { loud: [number, number]; mid: [number, number]; high: [number, n
 const ANY: [number, number] = [0, 1];
 const KIND = {
   silence: { loud: [0, 0.1], mid: ANY, high: ANY, w: [3, 0, 0] },
-  open: { loud: [0.85, 1], mid: [0.5, 1], high: [0, 0.5], w: [2, 3, 1.5] },         // a e o: the mouth open, the sound full
+  open: { loud: [0.85, 1], mid: [0.5, 1], high: [0, 0.5], voice: [0.45, 1], w: [2, 3, 1.5, 1.5] },         // a e o: the mouth open, the sound full
   // (an i or a u at the end of a word, said softly, rings little: most of it is under 450 Hz. It is still a
   // voice, which the air after a stop is not: the ī of hāthī is told from the puff before it by that)
-  close: { loud: [0.8, 1], mid: [0.3, 1], high: [0, 0.5], w: [2, 2.5, 1.5] },       // i u: loud, most of it low
-  glide: { loud: [0.7, 1], mid: [0.4, 1], high: [0, 0.55], w: [1.5, 1, 1.5] },      // l r y w
+  close: { loud: [0.8, 1], mid: [0.3, 1], high: [0, 0.5], voice: [0.45, 1], w: [2, 2.5, 1.5, 1.5] },       // i u: loud, most of it low
+  glide: { loud: [0.7, 1], mid: [0.4, 1], high: [0, 0.55], voice: [0.4, 1], w: [1.5, 1, 1.5, 1.2] },      // l r y w
   // (measured on the voices: the ring of a vowel is 0.5 to 0.95 of the sound on this scale, an m's or an n's 0 to 0.42)
-  nasal: { loud: [0.6, 1], mid: [0, 0.42], high: [0, 0.3], w: [2, 3, 1] },          // a hum, nothing above it
-  hiss: { loud: [0.3, 0.9], mid: ANY, high: [0.8, 1], w: [0.8, 0, 2.5] },           // s sh
-  breath: { loud: [0.2, 0.8], mid: ANY, high: [0.5, 1], w: [1.5, 0, 1.5] },         // f th kh h
+  nasal: { loud: [0.6, 1], mid: [0, 0.42], high: [0, 0.3], voice: [0.45, 1], w: [2, 3, 1, 1.2] },          // a hum, nothing above it
+  hiss: { loud: [0.3, 0.9], mid: ANY, high: [0.8, 1], voice: [0, 0.7], w: [0.8, 0, 2.5, 1.5] },           // s sh
+  breath: { loud: [0.2, 0.8], mid: ANY, high: [0.5, 1], voice: [0, 0.85], w: [1.5, 0, 1.5, 1] },         // f th kh h
   buzz: { loud: [0.4, 0.95], mid: [0, 0.4], high: ANY, w: [1.2, 1.5, 0] },          // z zh v: a hum, then a hiss on it
   hold: { loud: [0, 0.2], mid: ANY, high: ANY, w: [3, 0, 0] },                      // a stop holding, no voice
-  hum: { loud: [0.2, 0.95], mid: [0, 0.25], high: [0, 0.3], w: [2, 3, 1] },         // a stop holding, the voice going on
+  hum: { loud: [0.2, 0.95], mid: [0, 0.25], high: [0, 0.3], most: 0.16, w: [2, 3, 1] },         // a stop holding, the voice going on
   // (a b, d or g that starts a word: the voice may hum through the closure, or start only when it lets go, the
   // closure then silent before the first thing heard, as in "behind")
-  humFirst: { loud: [0, 0.95], mid: [0, 0.25], high: [0, 0.3], w: [2, 3, 1] },
+  humFirst: { loud: [0, 0.95], mid: [0, 0.25], high: [0, 0.3], most: 0.2, w: [2, 3, 1] },
   burst: { loud: [0.3, 1], mid: ANY, high: ANY, w: [0.8, 0, 0], most: 0.05 },       // a stop letting go
   puff: { loud: [0.3, 0.85], mid: ANY, high: [0.4, 1], voice: [0, 0.75], w: [1.2, 0, 1, 2.5], most: 0.16 }, // the air after it: a hiss, not a voice
 } satisfies Record<string, Kind>;
@@ -266,7 +271,17 @@ function cut(heard: Frames, st: Stretch[]): number[] {
   const ringing = Array.from(heard.mid).filter((_, i) => heard.loud[i] > 0.6).sort((a, b) => a - b);
   const top = ringing.length ? ringing[Math.floor(0.9 * (ringing.length - 1))] : 0;
   const gain = top > 0.25 ? Math.min(2, 0.9 / top) : 1;
-  const f: Frames = gain === 1 ? heard : { ...heard, mid: heard.mid.map((v) => Math.min(1, v * gain)) };
+  let f: Frames = gain === 1 ? heard : { ...heard, mid: heard.mid.map((v) => Math.min(1, v * gain)) };
+  // Where a recording has both bright sounds (vowels) and dark ones (m, n), its own contrast tells them apart,
+  // whatever its voice: the ring is then how bright a moment is against the brightest this recording has (a
+  // twelve decibels darker is none). A neural voice's m rings above Apple's: absolute thresholds do not carry over.
+  if (heard.tilt) {
+    const bright = Array.from(heard.tilt).filter((_, i) => heard.loud[i] > 0.6).sort((p, q) => p - q);
+    if (bright.length > 20) {
+      const hi = bright[Math.floor(0.9 * (bright.length - 1))], lo = bright[Math.floor(0.1 * (bright.length - 1))];
+      if (hi - lo >= 6) f = { ...f, mid: heard.tilt.map((t) => clamp01(1 - (hi - t) / 12)) };
+    }
+  }
   // the word in the recording: from the first to the last moment that is not silence
   let a = 0, b = J;
   while (a < J && f.loud[a] < HEARD) a++;

@@ -5,3 +5,6 @@ out/
 
 # private names the interface test also bans (one per line), kept out of the repository
 tests/banned-names.local
+
+# raw takes of the AI voice (made again from scripts/tutor-voice.ts when missing)
+scripts/.tts-cache/

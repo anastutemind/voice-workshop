@@ -110,7 +110,7 @@ describe('the teacher\'s recordings', () => {
     for (const e of COURSES.ipa.entries) {
       if (e.silent) continue;
       if (e.carrier) check(recordingId(e.carrier.lang, 0.75, e.carrier.text), sayOf(e, COURSES.ipa), e.carrier.lang);
-      for (const x of e.examples) if (x.ipa && x.lang !== 'ur') check(recordingId(x.lang, 0.82, x.text), x.ipa, x.lang);
+      for (const x of e.examples) if (x.ipa) check(recordingId(x.lang, 0.82, x.text), x.ipa, x.lang);
     }
     expect(seen).toBeGreaterThan(100);
     expect(wrong, wrong.slice(0, 20).join('\n')).toEqual([]);

@@ -36,8 +36,9 @@
  * publishing them.
  */
 import { execFileSync } from 'node:child_process';
+import { fal } from './falClient';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compactPhones } from '../src/dsp/speech/indic';
@@ -66,6 +67,19 @@ const inspect = opt('--inspect');
 /** --course ur|hi|ar|en|ipa: only that course's recordings */
 const course = opt('--course');
 const dry = args.includes('--dry');
+/** --apple: the system's voices (macOS `say`) instead of the AI voice (the recordings of the app used to be made so) */
+const apple = args.includes('--apple');
+/** the AI voice: a model of fal.ai and its settings; the same text with the same settings is made once and kept in CACHE */
+// (the checker of the service flags harmless words of the courses: the tomato, a letter's name; the texts are the app's own lists)
+const TTS = { model: 'fal-ai/elevenlabs/tts/eleven-v3', stability: 0.6 };
+/** TAKE_VARIANT=k: another take of the same texts (the voice never says a word twice alike: a take that does not suit the aligner is replaced by one that does, see tutor-voice-retake.py) */
+const VARIANT = Number(process.env.TAKE_VARIANT ?? 0);
+const STABILITY = [0.6, 0.45, 0.75, 0.9, 0.3, 0.55, 0.65, 0.8, 0.5, 0.7, 0.35, 0.85][VARIANT] ?? 0.6;
+const CACHE = new URL('./.tts-cache/', import.meta.url).pathname;
+/** the language code the voice is told to speak in */
+const LANG_CODE: Record<string, string> = { ur: 'ur', hi: 'hi', ar: 'ar', en: 'en', 'en-GB': 'en' };
+let collecting = false;
+const wanted = new Map<string, { voice: string; lang: string; text: string }>();
 const prune = args.includes('--prune');
 const only = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--inspect' && args[i - 1] !== '--course');
 const done = new Set<string>();
@@ -208,15 +222,87 @@ function decoded(file: string, fs: number): Frames | null {
 const LEVELS = [RISE, 0.7, 0.5, 0.8, 0.65, 0.55, 0.75, 0.85, 0.9];
 
 /**
+ * A take of the AI voice without what is not speech: the silence round it, and the clicks or breaths that stand
+ * alone a quarter of a second or more from the rest (an encoder leaves one at the end of some takes, and the
+ * aligner would take it for the last sound). Pauses inside the word (a stop holding) are kept.
+ */
+function trimTake(x: Float32Array): Float32Array | null {
+  const f = listen(x, FS);
+  const on = (i: number) => f.loud[i] >= 0.12;
+  const runs: [number, number][] = [];
+  for (let i = 0; i < f.n; i++) if (on(i)) { let j = i; while (j < f.n && on(j)) j++; runs.push([i, j]); i = j; }
+  // joined where the gap is short
+  const joined: [number, number][] = [];
+  for (const r of runs) {
+    const last = joined[joined.length - 1];
+    if (last && r[0] - last[1] < 0.25 / HOP) last[1] = r[1]; else joined.push([r[0], r[1]]);
+  }
+  const body = joined.filter((r) => r[1] - r[0] >= 0.06 / HOP);
+  if (!body.length) return x;
+  // a word with a quarter of a second of silence inside it is a bad take (the voice stopped and went on): said again, it comes out whole
+  if (body.length > 1) return null;
+  const from = Math.max(0, Math.round((body[0][0] * HOP - 0.05) * FS)), to = Math.min(x.length, Math.round((body[body.length - 1][1] * HOP + 0.08) * FS));
+  const y = x.slice(from, to);
+  const ramp = Math.round(0.01 * FS);
+  for (let i = 0; i < ramp && i < y.length; i++) { y[i] *= i / ramp; y[y.length - 1 - i] *= i / ramp; }
+  return y;
+}
+
+/** the name of a made voice take: its voice, language, text and settings */
+const ttsId = (voice: string, lang: string, text: string): string => createHash('sha1').update(`${TTS.model}|${TTS.stability}${VARIANT ? '|v' + VARIANT : ''}|${voice.split(' ')[0]}|${LANG_CODE[lang]}|${text}`).digest('hex').slice(0, 16);
+
+/** Makes every voice take `wanted` names that is not in CACHE yet, a few at a time (the voice is a model on fal.ai). */
+async function fetchTakes(): Promise<void> {
+  mkdirSync(CACHE, { recursive: true });
+  const todo = [...wanted.entries()].filter(([id]) => !existsSync(CACHE + id + '.mp3'));
+  console.log(`${wanted.size} takes wanted, ${todo.length} to make`);
+  let next = 0, failed = 0;
+  const work = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= todo.length) return;
+      const [id, w] = todo[i];
+      // A text the voice refuses (it flags a few harmless words, and returns nothing for some single letters) is
+      // tried again the way it may accept: with a trailing mark, then on the service's other model.
+      const tries: [string, Record<string, unknown>][] = [
+        [TTS.model, { text: w.text, voice: w.voice.split(' ')[0], language_code: LANG_CODE[w.lang], stability: STABILITY, enable_safety_checker: false }],
+        [TTS.model, { text: w.text + (w.lang === 'hi' ? ' ।' : w.lang === 'ar' || w.lang === 'ur' ? ' ۔' : ' .'), voice: w.voice.split(' ')[0], language_code: LANG_CODE[w.lang], stability: STABILITY, enable_safety_checker: false }],
+        [TTS.model, { text: '… ' + w.text + ' …', voice: w.voice.split(' ')[0], language_code: LANG_CODE[w.lang], stability: 0.8, enable_safety_checker: false }],
+        ['fal-ai/elevenlabs/tts/multilingual-v2', { text: w.text, voice: w.voice.split(' ')[0], language_code: LANG_CODE[w.lang], stability: 0.7, speed: 0.85, enable_safety_checker: false }],
+      ];
+      let last = '';
+      for (const [model, input] of tries) {
+        try {
+          const out = await fal(model, input);
+          const file = out.files.find((f) => /\.(mp3|wav)$/i.test(f.name));
+          if (!file) throw new Error('no audio in the answer');
+          writeFileSync(CACHE + id + '.mp3', file.bytes);
+          writeFileSync(CACHE + id + '.txt', `${w.voice} ${w.lang} ${w.text} (${model})\n`);
+          last = '';
+          break;
+        } catch (e) { last = (e as Error).message.slice(0, 160); }
+      }
+      if (last) {
+        failed++;
+        console.log(`!! no take for ${w.lang} ${w.text}: ${last}`);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: 8 }, work));
+  if (failed) console.log(`${failed} takes could not be made (they are left out)`);
+}
+
+/**
  * Records one thing the teacher says: `text` read by `voice` at `rate`, whose sounds are `ipa` (compact form).
  * `from`: the sounds of what the voice says when that is more than `ipa` (a word `ipa` is cut out of).
  */
-function record(lang: string, voice: string, rate: number, text: string, ipa: string, from?: string): void {
+function record(lang: string, voice: string, rate: number, text: string, ipa: string, from?: string, spoken: string = text): void {
   const key = `${voice}|${rate}|${text}`;
   if (only && !key.includes(only) && ipa !== only) return;
   if (done.has(key)) return; // the same text for two letters: said once
   done.add(key);
   if (prune) return;
+  if (collecting) { if (!apple && LANG_CODE[lang]) wanted.set(ttsId(voice, lang, spoken), { voice, lang, text: spoken }); return; }
   // (made by a run of another course at the same time: that run writes it)
   if (!dry && !lock(createHash('sha1').update(key).digest('hex').slice(0, 12))) { console.log(`   ${key}: made by another run`); return; }
   const own = said(lang, ipa);
@@ -225,8 +311,17 @@ function record(lang: string, voice: string, rate: number, text: string, ipa: st
 
   // ---- the voice says it
   const raw = join(tmp, 'raw.wav');
-  execFileSync('say', ['-v', voice, '-o', raw, `--data-format=LEF32@${FS}`, text]);
-  const x = readWav(raw);
+  if (!apple && !existsSync(CACHE + ttsId(voice, lang, spoken) + '.mp3')) { console.log(`!! no take for ${lang} ${spoken}: left out`); return; }
+  if (apple) execFileSync('say', ['-v', voice, '-o', raw, `--data-format=LEF32@${FS}`, text]);
+  else execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', CACHE + ttsId(voice, lang, spoken) + '.mp3', '-ac', '1', '-ar', String(FS), '-c:a', 'pcm_f32le', raw]);
+  const taken = apple ? readWav(raw) : trimTake(readWav(raw));
+  if (!taken) {
+    // (kept aside, so that the next run makes the take again)
+    renameSync(CACHE + ttsId(voice, lang, spoken) + '.mp3', CACHE + ttsId(voice, lang, spoken) + '.bad.mp3');
+    console.log(`!! bad take for ${lang} ${spoken}: a pause inside it; left out until it is made again`);
+    return;
+  }
+  const x = taken;
   if (x.length < FS * 0.05) { console.log('!! nothing said for', key); return; }
 
   // ---- where its sounds are
@@ -307,14 +402,21 @@ function record(lang: string, voice: string, rate: number, text: string, ipa: st
   const heard = listen(y, FS);
   // (a check: the sounds found again in what was made should be where they were put)
   const again = fitTo(heard, own.score.phones, own.tr).knots.audio;
-  const worst = again.length === outT.length ? Math.max(...again.map((t, i) => (i === 0 || i === S ? 0 : Math.abs(t - outT[i])))) : Infinity;
+  // (how far each boundary lies when the recording made is listened to again. Where a vowel turns into an l or a w there is no
+  // sharp place for it, and a lip is not moving there either: what counts is where the mouth closes and lets go, the
+  // boundaries beside a hold, a hum, a burst, a puff of air or a nasal)
+  const SHARP = new Set(['hold', 'hum', 'burst', 'puff', 'nasal']);
+  const away = (i: number) => (again.length === outT.length ? Math.abs(again[i] - outT[i]) : Infinity);
+  const worstAll = again.length === outT.length ? Math.max(0, ...again.map((_, i) => (i === 0 || i === S ? 0 : away(i)))) : Infinity;
+  const worst = again.length === outT.length ? Math.max(0, ...again.map((_, i) => (i === 0 || i === S || !(SHARP.has(kinds[i - 1]) || SHARP.has(kinds[i])) ? 0 : away(i)))) : Infinity;
   const factors = a.slice(1).map((v, i) => (v - a[i] > 0 ? (outT[i + 1] - outT[i]) / (v - a[i]) : 0));
   // (a voice that reads a letter by its name, or as a phrase, takes far longer than the letter's sounds do)
-  const other = x.length / FS > 0.34 * whole.score.phones.filter((q) => PHONEMES[q.ipa] && q.ipa !== '_').length + 0.25;
+  // (what is heard of the take, not the silence round it: a neural voice leaves a good deal)
+  const other = a[a.length - 1] - a[0] > 0.42 * whole.score.phones.filter((q) => PHONEMES[q.ipa] && q.ipa !== '_').length + 0.3;
   const flags: string[] = [];
   if (other) flags.push('long take');
-  if (worst > 0.06) flags.push(`found again ${(1000 * worst).toFixed(0)} ms away`);
-  if (factors.some((f, i) => f > 0 && (f < 0.5 || f > 3.3) && kinds[i] !== 'hold')) flags.push('stretched far');
+  if (worst > 0.06) flags.push(`closing or release found again ${(1000 * worst).toFixed(0)} ms away`);
+  if (factors.some((f, i) => f > 0 && (f < 0.35 || f > 3.3) && kinds[i] !== 'hold')) flags.push('stretched far');
 
   const file = createHash('sha1').update(key).digest('hex').slice(0, 12) + '.m4a';
   const wav = join(tmp, 'out.wav');
@@ -344,7 +446,7 @@ function record(lang: string, voice: string, rate: number, text: string, ipa: st
     writeWav(join(inspect, `${n}.wav`), x);
     writeWav(join(inspect, `${n}.made.wav`), y);
     writeFileSync(join(inspect, `${n}.json`), JSON.stringify({
-      key, lang, text, ipa, from: from ?? null, strange, flags, byHand, fingerprint: aligner, cuts, kinds: allKinds, keep: [s0, s1],
+      key, lang, text, ipa, from: from ?? null, strange, flags, byHand, worstAll, worstSharp: worst, fingerprint: aligner, cuts, kinds: allKinds, keep: [s0, s1],
       made: outT, onset: t0, level: best, shift, marks, phones: whole.score.phones.map((q) => [q.ipa, q.t0, q.t1]),
     }));
   }
@@ -353,28 +455,42 @@ function record(lang: string, voice: string, rate: number, text: string, ipa: st
   console.log(line);
 }
 
-for (const lang of ['ur', 'hi', 'ar', 'en'] as const) {
-  if (course && course !== lang) continue;
-  const A = ALPHABETS[lang];
-  const via = lang === 'ur' ? 'hi' : lang;
-  for (const l of A.letters) {
-    const say = l.say ?? (l.sound === 'ã' || isVowel(l.sound) ? l.sound : l.sound + A.vowel);
-    record(lang, RECORDED_VOICE[lang], 0.75, speechText(l, lang, via, 'sound', say), say, l.read?.from);
-    record(lang, RECORDED_VOICE[lang], 0.82, speechText(l, lang, via, 'word', say), l.word.ipa);
+function pass(): void {
+  for (const lang of ['ur', 'hi', 'ar', 'en'] as const) {
+    if (course && course !== lang) continue;
+    const A = ALPHABETS[lang];
+    const via = lang === 'ur' ? 'hi' : lang;
+    for (const l of A.letters) {
+      const say = l.say ?? (l.sound === 'ã' || isVowel(l.sound) ? l.sound : l.sound + A.vowel);
+      // (Urdu is said from its own script by the AI voice; the system's voice, which has none, read it in Devanagari)
+      const spoke = (what: 'sound' | 'word') => (lang === 'ur' && !apple ? speechText(l, lang, lang, what, say) : undefined);
+      record(lang, RECORDED_VOICE[lang], 0.75, speechText(l, lang, via, 'sound', say), say, l.read?.from, spoke('sound'));
+      record(lang, RECORDED_VOICE[lang], 0.82, speechText(l, lang, via, 'word', say), l.word.ipa, undefined, spoke('word'));
+    }
+  }
+
+  // ---- the course of sounds (the IPA): the letters that carry a sound alone, and the words that have it, in the
+  // languages recordings are made in. The same sound may be carried by one letter in several places: said once.
+  if (!course || course === 'ipa') {
+    for (const section of IPA_SECTIONS) for (const snd of section.sounds) {
+      const items: [number, string, string, string][] = [];
+      if (snd.carrier && snd.say && RECORDED_VOICE[snd.carrier.lang]) items.push([0.75, snd.carrier.lang, snd.carrier.text, snd.say]);
+      // (Urdu words of this course are in Arabic letters, which the system's Hindi voice that read Urdu cannot read)
+      for (const e of snd.examples) if (e.ipa && RECORDED_VOICE[e.lang] && (e.lang !== 'ur' || !apple)) items.push([0.82, e.lang, e.text, e.ipa]);
+      for (const [rate, lang, text, ipa] of items) record(lang, RECORDED_VOICE[lang], rate, text, ipa);
+    }
   }
 }
 
-// ---- the course of sounds (the IPA): the letters that carry a sound alone, and the words that have it, in the
-// languages recordings are made in. The same sound may be carried by one letter in several places: said once.
-if (!course || course === 'ipa') {
-  for (const section of IPA_SECTIONS) for (const snd of section.sounds) {
-    const items: [number, string, string, string][] = [];
-    if (snd.carrier && snd.say && RECORDED_VOICE[snd.carrier.lang]) items.push([0.75, snd.carrier.lang, snd.carrier.text, snd.say]);
-    // (Urdu words of this course are in Arabic letters, which the Hindi voice that reads Urdu cannot read)
-    for (const e of snd.examples) if (e.ipa && RECORDED_VOICE[e.lang] && e.lang !== 'ur') items.push([0.82, e.lang, e.text, e.ipa]);
-    for (const [rate, lang, text, ipa] of items) record(lang, RECORDED_VOICE[lang], rate, text, ipa);
-  }
+// the first pass lists what is to be said; the takes are made; the second pass finds the sounds in them
+if (!apple && !prune) {
+  collecting = true;
+  pass();
+  collecting = false;
+  done.clear();
+  if (!dry) await fetchTakes();
 }
+pass();
 
 // files no longer named are removed (by a run of everything: a run of one course may run beside others)
 if (prune) {
