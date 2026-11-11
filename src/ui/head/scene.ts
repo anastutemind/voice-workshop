@@ -15,7 +15,7 @@ import { computeGeometry, canonToWorld, canonTransform, CANON_SCALE, GEOMETRY_CO
 import { Anatomy, Articulators, DEFAULT_ANATOMY, DEFAULT_ARTICULATORS, DEFAULT_TEETH } from '../../dsp/tract/types';
 import { HEAD_BACK, HEAD_FRONT_UP, CHIN, NASAL_CENTRE, NASAL_HALF, chinWeight, smoothOutline } from './outline';
 import { BACKDROP_FRAME } from './frame';
-import { buildWarp, Warp } from './warp';
+import { buildWarp, Piece, Warp } from './warp';
 
 /** An affine map as the canvas takes it: x' = a x + c y + e, y' = b x + d y + f. */
 export type Mat = [number, number, number, number, number, number];
@@ -126,6 +126,13 @@ const SKIN_UNDER = [
 ];
 /** The points of the model's larynx that lead the sheet: the front of its inlet, which moves with the tongue's root (LARYNX in geometry.ts). */
 const LARYNX_LEAD = [3, 4, 8];
+/**
+ * The roof of the soft tissue under the hard palate, from the velum's root to the front teeth (canonical, left to right:
+ * the part of TISSUE's outline that runs along the palate): the tongue is led no higher than a little under it, for
+ * above it the knots are held, and tissue pushed into them folds.
+ */
+const ROOF = [0.7, 10.35, 1.5, 10.45, 2.5, 10.62, 3.5, 10.72, 4.3, 10.6, 5.0, 10.3, 5.55, 9.92];
+const ROOF_CLEAR = 0.07;
 /** How far above the painted tongue its led line lies, cm. */
 const TONGUE_PROUD = 0.07;
 /** How many points lead the tongue along its root, its body's arc, its blade and round its tip. */
@@ -629,6 +636,54 @@ function theWarp(): { warp: Warp; leads: Leads } {
   return { warp: sheetWarp, leads };
 }
 
+
+/**
+ * The sheet is the smoothest shape between what leads it, but nothing in that keeps a cell from turning inside out where two
+ * leads cross or press the tissue against what is held (a tongue lying on the roof of the mouth). A cell that is turned
+ * inside out draws the painting backwards over its neighbours. Here the free knots of such cells are drawn toward the
+ * middle of the knots round them, again and again, until no cell of the tissue is turned (or a few dozen times): a knot only
+ * ever moves a little, to where it would lie if the leads asked a little less of it.
+ */
+/** Where the lips' leads begin (canonical x): the sheet in front of it is left as the leads make it, for they hold the lips' profile to the model's. */
+const LIPS_X = 6.4;
+const unfolding = new WeakMap<Warp, { nb: Int32Array[]; pieces: Piece[] }>();
+function unfold(W: Warp, d: Float64Array): void {
+  let u = unfolding.get(W);
+  if (!u) {
+    const sets: Set<number>[] = Array.from({ length: W.kind.length }, () => new Set<number>());
+    const all = [...W.whole, ...W.parts].filter((pc) => pc.kind !== 3);
+    for (const pc of all) for (let c = 0; c < 4; c++) { const a = pc.k[c], b = pc.k[(c + 1) % 4]; sets[a].add(b); sets[b].add(a); }
+    // (only cells with a free knot can be turned right again by moving it)
+    u = { nb: sets.map((st) => Int32Array.from(st)), pieces: all.filter((pc) => pc.k.some((n) => W.kind[n] === 0)) };
+    unfolding.set(W, u);
+  }
+  const { nb, pieces } = u;
+  const R = W.rest;
+  const turned = (pc: Piece): boolean => {
+    for (const [i, j, k] of [[0, 1, 2], [0, 2, 3]]) {
+      const p = pc.k[i], q = pc.k[j], r = pc.k[k];
+      const ax = R[2 * q] + d[2 * q] - R[2 * p] - d[2 * p], ay = R[2 * q + 1] + d[2 * q + 1] - R[2 * p + 1] - d[2 * p + 1];
+      const bx = R[2 * r] + d[2 * r] - R[2 * p] - d[2 * p], by = R[2 * r + 1] + d[2 * r + 1] - R[2 * p + 1] - d[2 * p + 1];
+      if (ax * by - ay * bx < 0) return true;
+    }
+    return false;
+  };
+  const mark = new Uint8Array(W.kind.length);
+  for (let it = 0; it < 40; it++) {
+    mark.fill(0);
+    let any = false;
+    for (const pc of pieces) if (turned(pc)) { any = true; for (const n of pc.k) if (W.kind[n] === 0 && R[2 * n] < LIPS_X) mark[n] = 1; }
+    if (!any) return;
+    for (let n = 0; n < mark.length; n++) {
+      if (!mark[n] || !nb[n].length) continue;
+      let sx = 0, sy = 0;
+      for (const m of nb[n]) { sx += d[2 * m]; sy += d[2 * m + 1]; }
+      d[2 * n] = 0.5 * d[2 * n] + (0.5 * sx) / nb[n].length;
+      d[2 * n + 1] = 0.5 * d[2 * n + 1] + (0.5 * sy) / nb[n].length;
+    }
+  }
+}
+
 /** The canonical frame round the warp's grid, as rectangles (x0, y0, x1, y1), each wholly above or below BEND_Y. */
 const FRAME_RECTS: number[][] = (() => {
   const g = SHEET_GRID, f = BACKDROP_FRAME, o = g.h / 2;
@@ -713,7 +768,14 @@ export function headScene(geom: TractGeometry, an: Anatomy, a: Articulators): He
     // velum or the wall of the pharynx (the air there is shut), it lies against them instead
     const tl = tongueLead(solid('tongue'));
     for (let i = 0; i < 2 * L.tongue; i += 2) {
-      if (tl) put(...underRoof(geom, tl[i], tl[i + 1], 0)); else { to[q] = L.rest[q]; to[q + 1] = L.rest[q + 1]; q += 2; }
+      if (tl) {
+        const [wx, wy] = underRoof(geom, tl[i], tl[i + 1], 0);
+        const [cx, cy] = toCanon(wx, wy);
+        // (under the soft tissue's roof)
+        let top = Infinity;
+        for (let k = 0; k + 3 < ROOF.length; k += 2) if (cx >= ROOF[k] && cx <= ROOF[k + 2]) top = ROOF[k + 1] + ((ROOF[k + 3] - ROOF[k + 1]) * (cx - ROOF[k])) / (ROOF[k + 2] - ROOF[k]) - ROOF_CLEAR;
+        to[q++] = cx; to[q++] = Math.min(cy, top);
+      } else { to[q] = L.rest[q]; to[q + 1] = L.rest[q + 1]; q += 2; }
     }
     const u0 = q;
     for (const i of L.upper) put(upperFace[2 * i], upperFace[2 * i + 1]);
@@ -744,6 +806,7 @@ export function headScene(geom: TractGeometry, an: Anatomy, a: Articulators): He
     const lx = solid('larynx');
     for (const i of LARYNX_LEAD) put(lx[2 * i], lx[2 * i + 1]);
     const d = W.solve(dJaw, to);
+    unfold(W, d);
     const nn = W.rest.length / 2;
     const at = new Float32Array(2 * nn);
     for (let i = 0; i < nn; i++) {

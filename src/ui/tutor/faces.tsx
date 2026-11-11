@@ -15,7 +15,7 @@ import { DEFAULT_ANATOMY, DEFAULT_TEETH } from '../../dsp/tract/types';
 import { NASAL_CENTRE, chinWeight } from '../head/outline';
 import { headScene, mul, Mat, HeadScene } from '../head/scene';
 import { Backdrop, getBackdrop, paintPlate, cutAirOut, paintVelumOver, paintRim, paintGlow, fadeNeck } from '../head/painter';
-import { AnatomyGL } from '../head/gl';
+import { AnatomyGL, CavityLook } from '../head/gl';
 import type { Pose, Stage } from './motion';
 import { CLOSED_AREA, Flow, flowOf, lipsOf, LipState, readout, Readout, REST_ART, restGeom } from './readout';
 import type { Handle } from './guide';
@@ -351,12 +351,12 @@ const anatomyDev = { teeth: false };
  * the wet rim of the air's walls as far forward as the teeth, and the velum (the plate's own is painted in
  * another posture than the model's).
  */
-function paintOverAir(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, geom: TractGeometry): void {
+function paintOverAir(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, bd: Backdrop, geom: TractGeometry, cavity = false): void {
   // under a raised blade (inside the model's tongue, which runs straight down to the floor, but under the tongue
   // as it is, and not in the air): the floor of the mouth, in the shadow of the blade
   const t = tongueShape(sc, geom);
   const mesh = sc.sprites.find((q) => q.id === 'tongue')?.poly;
-  if (t.outline !== sc.tongue && mesh) {
+  if (!cavity && t.outline !== sc.tongue && mesh) {
     const { keep } = airOf(sc, geom);
     lc.save();
     lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
@@ -416,14 +416,17 @@ function paintOverAir(lc: CanvasRenderingContext2D, sc: HeadScene, world: Mat, b
     lc.stroke();
     lc.restore();
   }
-  lc.save();
-  lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
-  lc.beginPath();
-  lc.rect(-200, -200, 200 + geom.landmarks.upperEdge[0] - 0.25 * sc.s, 400);
-  lc.clip();
-  paintRim(lc, sc, world);
-  lc.restore();
-  paintVelumOver(lc, sc, world, bd);
+  // (the graphics card's cavity has its own wet light along its walls)
+  if (!cavity) {
+    lc.save();
+    lc.setTransform(world[0], world[1], world[2], world[3], world[4], world[5]);
+    lc.beginPath();
+    lc.rect(-200, -200, 200 + geom.landmarks.upperEdge[0] - 0.25 * sc.s, 400);
+    lc.clip();
+    paintRim(lc, sc, world);
+    lc.restore();
+  }
+  if (!cavity) paintVelumOver(lc, sc, world, bd);
   if (anatomyDev.teeth) {
     paintTooth(lc, sc, world, 'lowerIncisor', bd.tone.mucosa);
     paintTooth(lc, sc, world, 'upperIncisor', bd.tone.mucosa);
@@ -542,8 +545,29 @@ const airOf = (sc: HeadScene, geom: TractGeometry): { cut: number[][]; keep: num
   // the air of the grid as its strip of quads, one between each two grid lines: drawn as one outline it folds over
   // itself where its floor or its roof turns back, and a fold would be left uncut
   const strip: number[][] = [];
-  for (let i = 0; i + 3 < sc.lower.length; i += 2) strip.push([sc.lower[i], sc.lower[i + 1], sc.lower[i + 2], sc.lower[i + 3], sc.upper[i + 2], sc.upper[i + 3], sc.upper[i], sc.upper[i + 1]]);
-  return { cut: [sc.mouth, sc.port, t.front, ...strip], keep: [t.outline, solid('upperIncisor'), li, lips.upper, lips.lower, ...lips.gums], clear: sc.margins().map((m) => m.off), hard: lips.gums };
+  // (not where the walls all but touch, under a millimetre: there the tongue lies on the roof of the mouth, and a hairline of
+  // air between them, cut across the plate's curves, would only show as a row of dark slivers)
+  const shut = 0.08 * sc.s;
+  // (and where the air lies on the tongue its strip reaches a little into it: what the tongue keeps is its outline, a
+  // smooth curve that the strip's own edge, made of the grid's steps, is not, and between them the air would be cut
+  // across the curve in slivers; the tongue's own outline then bounds the air exactly)
+  const into = 0.07 * sc.s;
+  const low = (i: number): [number, number] => {
+    const r = geom.rays[i / 2];
+    return geom.hits[i / 2].lowId === 'tongue' ? [sc.lower[i] - r.nx * into, sc.lower[i + 1] - r.ny * into] : [sc.lower[i], sc.lower[i + 1]];
+  };
+  for (let i = 0; i + 3 < sc.lower.length; i += 2) {
+    const wi = Math.hypot(sc.upper[i] - sc.lower[i], sc.upper[i + 1] - sc.lower[i + 1]), wj = Math.hypot(sc.upper[i + 2] - sc.lower[i + 2], sc.upper[i + 3] - sc.lower[i + 3]);
+    if (wi < shut && wj < shut) continue;
+    strip.push([...low(i), ...low(i + 2), sc.upper[i + 2], sc.upper[i + 3], sc.upper[i], sc.upper[i + 1]]);
+  }
+  return { cut: [sc.mouth, t.front, ...strip], keep: [t.outline, solid('upperIncisor'), li, lips.upper, lips.lower, ...lips.gums], clear: sc.margins().map((m) => m.off), hard: lips.gums };
+};
+
+/** How the air is lit as a cavity (see gl.ts): the light comes from the mouth, and is gone from the cavity where the mouth opens onto the room. */
+const cavityLook = (sc: HeadScene, geom: TractGeometry): CavityLook => {
+  const lip = geom.landmarks.lipFront, s = sc.s;
+  return { mouth: [lip[0], lip[1]], reach: 7 * s, fade: [geom.landmarks.upperEdge[0] - 1.3 * s, geom.landmarks.upperEdge[0] - 0.15 * s], vanish: 0.8 * s, spread: 0.28 * s };
 };
 
 /**
@@ -551,9 +575,9 @@ const airOf = (sc: HeadScene, geom: TractGeometry): { cut: number[][]; keep: num
  * the side view does): the air to take out of the plate, what to keep of it inside the air, and what to draw over
  * the air afterwards.
  */
-export function anatomyLayers(sc: HeadScene, geom: TractGeometry): { cut: number[][]; keep: number[][]; clear: number[][]; hard: number[][]; over: (lc: CanvasRenderingContext2D, world: Mat, bd: Backdrop) => void } {
+export function anatomyLayers(sc: HeadScene, geom: TractGeometry): { cut: number[][]; keep: number[][]; clear: number[][]; hard: number[][]; look: CavityLook; over: (lc: CanvasRenderingContext2D, world: Mat, bd: Backdrop) => void } {
   const { cut, keep, clear, hard } = airOf(sc, geom);
-  return { cut, keep, clear, hard, over: (lc, world, bd) => paintOverAir(lc, sc, world, bd, geom) };
+  return { cut, keep, clear, hard, look: cavityLook(sc, geom), over: (lc, world, bd) => paintOverAir(lc, sc, world, bd, geom, true) };
 }
 
 /**
@@ -663,7 +687,7 @@ function drawSide(ctx: CanvasRenderingContext2D, over: CanvasRenderingContext2D,
       }
       const key = `${cw}x${ch}|${frameKey}|${shown.toFixed(3)}`;
       if (!hidden && lay.glKey !== key) {
-        gl.render(sc, world, cw, ch, { img: bd.img, mask: bd.mask! }, cut, keep, { ...edges, neck: [yOf(sc.neckEnd), yOf(sc.neckEnd + 1.6 * sc.s)] }, shown, clear, hard);
+        gl.render(sc, world, cw, ch, { img: bd.img, mask: bd.mask! }, cut, keep, { ...edges, neck: [yOf(sc.neckEnd), yOf(sc.neckEnd + 1.6 * sc.s)] }, shown, clear, hard, cavityLook(sc, geom));
         lay.glKey = key;
       }
       const display = hidden ? 'none' : '';
@@ -700,11 +724,12 @@ function drawSide(ctx: CanvasRenderingContext2D, over: CanvasRenderingContext2D,
       for (const q of keep) { ctx.beginPath(); ctx.rect(-200, -200, 400, 400); ctx.moveTo(q[0], q[1]); for (let i = 2; i < q.length; i += 2) ctx.lineTo(q[i], q[i + 1]); ctx.closePath(); ctx.clip('evenodd'); }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-    for (const q of [sc.lumen, sc.port]) if (q.length >= 6) { path(q); ctx.fill(); }
+    // (the graphics card draws the air as a cavity, in the anatomy's own layer)
+    if (!onCard) for (const q of [sc.lumen, sc.port]) if (q.length >= 6) { path(q); ctx.fill(); }
     ctx.restore();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (!hidden) {
-      if (onCard) paintOverAir(ctx, sc, world, bd, geom);
+      if (onCard) paintOverAir(ctx, sc, world, bd, geom, true);
       else ctx.drawImage(lay.cv, 0, 0, cw, ch);
     }
     paintGlow(ctx, sc, world, flow.nose > 0.05 ? 0.35 + 0.65 * flow.nose : 0);
