@@ -91,14 +91,6 @@ function patch(m: THREE.MeshPhysicalMaterial, u: SkinUniforms, hair: boolean): v
       float hairM = dtl.b;
       vec3 base = diffuseColor.rgb;
       base = mix( vec3( dot( base, vec3( 0.2126, 0.7152, 0.0722 ) ) ), base, 0.9 );
-      // (where the neck grows from the jaw's edge the picture has its seam: there it is the low frequency of the picture only)
-      base = mix( base, texture2D( map, vMapUv, 4.5 ).rgb, 0.85 * vAoThin.z );
-      // (the photographs carry the light they were taken in: the low frequencies of their brightness are partly taken out)
-      {
-        vec3 low = texture2D( map, vMapUv, 5.0 ).rgb;
-        float ll = dot( low, vec3( 0.2126, 0.7152, 0.0722 ) );
-        base *= clamp( pow( 0.2 / max( ll, 0.02 ), 0.55 * uDelight ), 0.8, 1.35 );
-      }
       // the inner side of the lips, turned into the mouth: wet mucosa
       float mouth = ( 1.0 - smoothstep( 3.0, 4.2, abs( vCanon.z ) ) ) * smoothstep( 5.8, 6.8, vCanon.y ) * ( 1.0 - smoothstep( 9.6, 10.4, vCanon.y ) ) * ( 1.0 - smoothstep( 9.2, 9.9, vCanon.x ) ) * smoothstep( 4.0, 5.2, vCanon.x );
       float inward = smoothstep( 0.15, -0.45, normalize( vFacing ).x ) * mouth;
@@ -143,7 +135,7 @@ function patch(m: THREE.MeshPhysicalMaterial, u: SkinUniforms, hair: boolean): v
         vec4 E = vCanon.z < 0.0 ? uEyeL : uEyeR;
         vec3 d = vCanon - E.xyz;
         float dist = length( d ) - E.w;
-        float top = smoothstep( -0.3, 0.3, d.y ) * smoothstep( -0.2, 0.6, d.x ) * smoothstep( 2.1, 1.5, abs( d.z ) );
+        float top = smoothstep( -0.3, 0.3, d.y ) * smoothstep( -0.2, 0.6, d.x ) * smoothstep( 1.45, 1.0, abs( d.z ) );
         float band = smoothstep( -0.1, 0.03, dist ) * smoothstep( 0.32, 0.06, dist ) * top;
         float ang = atan( d.y, abs( d.z ) );
         float bin = floor( ang * 64.0 ), fr = fract( ang * 64.0 );
@@ -180,11 +172,11 @@ function patch(m: THREE.MeshPhysicalMaterial, u: SkinUniforms, hair: boolean): v
         #endif
       }`);
     fs = fs.replace('#include <dithering_fragment>', `#include <dithering_fragment>
-      ${hair ? '' : 'gl_FragColor.rgb = mix( backdropColor( gl_FragCoord.xy / uRes * 2.0 - 1.0, uAspect, gl_FragCoord.xy ), gl_FragColor.rgb, smoothstep( uFade.x, uFade.y, vWPos.y ) );'}`);
+      ${hair ? '' : '{ float fa = smoothstep( uFade.x, uFade.y, vWPos.y ); gl_FragColor.rgb = mix( backdropColor( gl_FragCoord.xy / uRes * 2.0 - 1.0, uAspect, gl_FragCoord.xy ), gl_FragColor.rgb, fa * fa * ( 3.0 - 2.0 * fa ) ); }'}`);
     fs = fs.replace('#include <opaque_fragment>', `
       ${hair ? 'diffuseColor.a = shellA * smoothstep( uFade.x, uFade.y, vWPos.y );' : `
       // the neck: darker toward its end as the shoulders would shade it
-      outgoingLight *= mix( 0.6, 1.0, smoothstep( uFade.x, uFade.y + 3.0, vWPos.y ) );`}
+      outgoingLight *= mix( 0.9, 1.0, smoothstep( uFade.x, uFade.y, vWPos.y ) );`}
       #include <opaque_fragment>`);
     if (hair) {
       s.vertexShader = s.vertexShader.replace('varying vec3 vObjN;', 'varying vec3 vObjN; varying float aShellH;').replace('vObjN = normal;', 'vObjN = normal; aShellH = aShell;');
@@ -223,7 +215,7 @@ export function skinMaterials(): Skin {
  * How near each point is to the seam where the neck grows from the jaw's edge (0 away from it, 1 on it, within
  * four rings of triangles of it): the points that the grown neck and the scan share (`same`) are the seam.
  */
-export function seamWeights(index: Uint32Array, same: Int32Array, count: number, n0: number): Float32Array {
+export function seamWeights(index: Uint32Array, same: Int32Array, count: number, n0: number, rings = 5): Float32Array {
   const w = new Float32Array(count);
   const roots = new Set<number>();
   for (let i = n0; i < count; i++) if (same[i] < n0) roots.add(same[i]);
@@ -232,12 +224,12 @@ export function seamWeights(index: Uint32Array, same: Int32Array, count: number,
   let front: number[] = [...roots];
   const d = new Float32Array(count).fill(-1);
   for (const r of front) d[r] = 0;
-  for (let step = 1; step <= 5 && front.length; step++) {
+  for (let step = 1; step <= rings && front.length; step++) {
     const nxt: number[] = [];
     for (const v of front) for (const u of nb[v]) if (d[u] < 0) { d[u] = step; nxt.push(u); }
     front = nxt;
   }
-  for (let i = 0; i < count; i++) { const r = d[same[i]]; w[i] = r < 0 ? 0 : Math.max(0, 1 - r / 5); }
+  for (let i = 0; i < count; i++) { const r = d[same[i]]; w[i] = r < 0 ? 0 : Math.max(0, 1 - r / rings); }
   return w;
 }
 

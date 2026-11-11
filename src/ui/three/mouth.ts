@@ -70,12 +70,14 @@ function patch(m: THREE.MeshPhysicalMaterial, u: MouthUniforms, kind: 'teeth' | 
         float groove = exp( -pow( vWP.z / 0.14, 2.0 ) );
         flesh *= 1.0 - 0.2 * groove;
         flesh *= 0.92 + 0.16 * vn3( vWP * 22.0 );
+        // (a round tongue: bright on its back, in shadow where it turns down to the floor of the mouth)
+        flesh *= mix( 0.38, 1.12, smoothstep( 0.05, 0.75, vBlob.y ) );
         diffuseColor.rgb = flesh;`,
       cavity: `
         float ridges = 0.5 + 0.5 * sin( vWP.x * 15.0 + 2.0 * vn3( vWP * 2.0 ) );
         float roof = smoothstep( 0.2, 0.9, vBlob.y );
         vec3 mucosa = mix( vec3( 0.42, 0.095, 0.095 ), vec3( 0.52, 0.2, 0.19 ), roof * ( 0.3 + 0.7 * ridges ) );
-        mucosa *= 0.88 + 0.24 * vn3( vWP * 11.0 );
+        mucosa *= ( 0.88 + 0.24 * vn3( vWP * 11.0 ) ) * mix( 0.62, 1.0, roof );
         diffuseColor.rgb = mucosa;`,
     }[kind];
     fs = fs.replace('#include <map_fragment>', `#include <map_fragment>\n${color}`);
@@ -99,7 +101,7 @@ function patch(m: THREE.MeshPhysicalMaterial, u: MouthUniforms, kind: 'teeth' | 
       {
         float ml = mouthLight( vWP );
         ${kind === 'teeth' ? 'ml *= 1.0 - 0.35 * smoothstep( 0.55, 1.0, vCrown );' : ''}
-        ${kind === 'cavity' ? ( dim < 1 ? 'ml = 0.55 + 0.45 * ml;' : 'ml *= 1.0 - 0.8 * smoothstep( 0.8, 3.0, abs( vWP.z ) );' ) : ''}
+        ${kind === 'cavity' ? ( dim < 1 ? 'ml *= 1.0 - 0.65 * smoothstep( 0.8, 3.0, abs( vWP.z ) );' : 'ml *= 1.0 - 0.8 * smoothstep( 0.8, 3.0, abs( vWP.z ) );' ) : ''}
         outgoingLight *= ml * ${dim.toFixed(2)};
         outgoingLight += vec3( 0.045, 0.008, 0.007 ) * ( 0.4 + 0.6 * ml );
       }
@@ -114,7 +116,7 @@ function patch(m: THREE.MeshPhysicalMaterial, u: MouthUniforms, kind: 'teeth' | 
 /** The inside of the head's skin where it is seen from within (the cheeks' lining at the corners of the mouth): the vault's own mucosa. */
 export function innerMaterial(u: MouthUniforms): THREE.MeshPhysicalMaterial {
   const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0, ior: 1.38, clearcoat: 0.3, clearcoatRoughness: 0.3, side: THREE.BackSide });
-  patch(m, u, 'cavity', 0.75);
+  patch(m, u, 'cavity', 0.6);
   m.customProgramCacheKey = () => 'vw-mouth-inner-1';
   return m;
 }
@@ -268,11 +270,11 @@ export class MouthParts {
       const bot = Math.max(bot0, top - 2.6 * s);
       const fromTip = (x1 - x) / (1.5 * s), tip = fromTip < 1 ? Math.sqrt(Math.max(0, 1 - (1 - fromTip) * (1 - fromTip))) : 1;
       const fromBack = (x - x0) / (0.9 * s), back = fromBack < 1 ? 0.55 + 0.45 * smooth(fromBack) : 1;
-      const w = Math.max(0.3 * s, arch(Math.max(x, 2.6 * s)) + 0.25 * s) * tip * back;
+      const w = Math.max(0.3 * s, (arch(Math.max(x, 2.6 * s)) + 0.05 * s) * 0.86) * tip * back;
       const yc = 0.5 * (top + bot), h = 0.5 * (top - bot);
       for (let j = 0; j < R; j++) {
         const a = (2 * Math.PI * j) / R, c = Math.cos(a), sn = Math.sin(a);
-        const e = 2 / 2.4;
+        const e = 2 / 2.2;
         T[3 * (k * R + j)] = x;
         T[3 * (k * R + j) + 1] = yc + h * Math.sign(sn) * Math.pow(Math.abs(sn), e) - (sn > 0 ? 0.1 * s * Math.exp(-Math.pow((w * c) / (0.3 * s), 2)) : 0);
         T[3 * (k * R + j) + 2] = w * Math.sign(c) * Math.pow(Math.abs(c), e);
