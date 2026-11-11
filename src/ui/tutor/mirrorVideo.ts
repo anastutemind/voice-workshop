@@ -270,8 +270,9 @@ export function useClipList(): ClipList | null {
 /** What the mirror shows for a recording that has a clip: the video, or the morphed photographs (to be compared). */
 export type MirrorMode = 'video' | 'photo';
 const MODE_KEY = 'voice-workshop.tutor.mirror';
-let mode: MirrorMode = 'video';
-try { if (localStorage.getItem(MODE_KEY) === 'photo') mode = 'photo'; } catch { /* nothing remembered */ }
+// (the photo morph is what the mirror shows unless the video is chosen: a Kling clip's head and skin do not match the rest photograph)
+let mode: MirrorMode = 'photo';
+try { if (localStorage.getItem(MODE_KEY) === 'video') mode = 'video'; } catch { /* nothing remembered */ }
 const modeListeners = new Set<() => void>();
 
 export function setMirrorMode(m: MirrorMode): void {
