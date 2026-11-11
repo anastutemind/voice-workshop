@@ -14,8 +14,9 @@ import type { Handle } from './guide';
 import type { Face } from './faces';
 import { hush, Utterance } from './speech';
 import { playClip, stopClip, voiceClip } from './clips';
-import { fit } from './align';
+import { fit, type Fit } from './align';
 import { Pace } from './sync';
+import { recTimeOf, type Cue } from './mirrorClip';
 
 export type What = 'sound' | 'word';
 
@@ -79,6 +80,12 @@ export class Player {
   private clock: (() => number) | null = null;
   /** how far apart the frames come: a frame is drawn that much ahead of the sound, to be seen with it */
   readonly pace = new Pace();
+  /**
+   * The teacher's recording played with the clip on the stage (kept, once played, until another clip is put there):
+   * its name, how its sounds lie against the movement's, and the clock of what is heard while it plays. The mirror's
+   * video is the picture of that recording, and is shown from this (`cue`).
+   */
+  private recording: { id: string; fit: Fit | null; now: (() => number) | null } | null = null;
   /** Runs `loop` at every frame, the time read first. */
   private run(my: number, loop: () => void): void {
     const frame = () => {
@@ -134,6 +141,19 @@ export class Player {
     return this.cache.face;
   };
 
+  /**
+   * What the mirror's video is told: which recording goes with the clip, and where in it the picture is. While it
+   * plays, the time that is heard (the recording's own clock, read at the instant of the call); paused or scrubbed,
+   * the time of the recording that the movement's time is. Null: the clip has no recording (the model's voice, a
+   * silent clip, a speed that has none), and the mirror shows the morphed photographs.
+   */
+  cue = (): Cue | null => {
+    const r = this.recording;
+    if (!r || !this.clip) return null;
+    if (this.playing) return { id: r.id, playing: true, at: r.now ? r.now() : null };
+    return { id: r.id, playing: false, at: r.fit && this.t >= 0 ? recTimeOf(r.fit.knots, this.t) : null };
+  };
+
   /** Points at a part of the mouth (null: back to the step's own). */
   point(handle: Handle | null): void {
     if (this.pin === handle) return;
@@ -145,6 +165,7 @@ export class Player {
   load(clip: Clip, t?: number): void {
     this.halt();
     this.clip = clip;
+    this.recording = null;
     // (left alone, a clip shows the mouth at rest, closed: the sound's own shape is seen when it is played or stepped to)
     this.t = t === undefined ? -LEAD_IN : Math.max(0, Math.min(clip.traj.duration, t));
     this.emit();
@@ -164,6 +185,8 @@ export class Player {
     if (!clip) return Promise.resolve('stopped');
     const my = ++this.token;
     const end = clip.traj.duration, speech = clip.traj.speech;
+    // (named at once, so that the mirror can fetch its video of the recording during the breath in)
+    this.recording = sound.kind === 'voice' && sound.id ? { id: sound.id, fit: null, now: null } : null;
     this.t = -LEAD_IN;
     this.playing = true;
     this.inhaling = true;
@@ -176,6 +199,7 @@ export class Player {
         this.token++;
         cancelAnimationFrame(this.raf);
         this.clock = null;
+        if (this.recording) this.recording.now = null;
         this.playing = false;
         this.inhaling = false;
         this.settle = null;
@@ -204,6 +228,8 @@ export class Player {
         // played with this clip: its times would not be this clip's, and the mouth would be out of step with it
         const rec = got && (!got.marks || fit(clip.traj, clip.score.phones, got).marked) ? got : null;
         if (my !== this.token) return;
+        // (only a recording that is really played has a video: without one the mirror goes back to the photographs)
+        this.recording = null;
         if (sound.kind === 'model' || (sound.kind === 'voice' && !rec && !sound.speak)) {
           // the model's voice: the picture follows the time of the audio
           // (the audio is woken first, so that a stop while it wakes leaves nothing to sound later)
@@ -244,6 +270,7 @@ export class Player {
             const f = fit(clip.traj, clip.score.phones, rec);
             const trace: number[] = [];
             if (import.meta.env.DEV && typeof window !== 'undefined') Object.assign(window, { tutorSync: { kind: 'recording', t0: rec.t0, t1: rec.t1, dur: rec.buffer.duration, latency: live.latency(), trace, fit: f, rec, traj: clip.traj, now: live.now, pace: this.pace } });
+            this.recording = { id: sound.id!, fit: f, now: live.now };
             this.clock = () => Math.min(speech, f.at(live.now() + this.pace.lead()));
             const loop = () => {
               const now = live.now();
@@ -325,6 +352,7 @@ export class Player {
     this.token++;
     cancelAnimationFrame(this.raf);
     this.clock = null;
+    if (this.recording) this.recording.now = null;
     this.inhaling = false;
     hush();
     stopClip();

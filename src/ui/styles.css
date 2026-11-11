@@ -556,6 +556,8 @@ input[type='range'] { accent-color: var(--amber); width: 100%; }
 .mirror3d { position: relative; width: 100%; height: 100%; background: radial-gradient(120% 90% at 40% 30%, #2a2b30, #0c0c0e 75%); }
 .mirror3d canvas { width: 100%; height: 100%; display: block; opacity: 0; transition: opacity 0.4s; }
 .mirror3d.ready canvas { opacity: 1; }
+/* the speaking video lies on the photographs, the same box and crop; how much of it shows is set by the page at every frame */
+.mirror3d-video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; object-position: center; opacity: 0; pointer-events: none; background: transparent; }
 .mirror3d-state { position: absolute; left: 12px; right: 12px; bottom: 10px; margin: 0; font-size: 12px; color: var(--t2); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); }
 .mirror3d-state span { color: var(--t1); font-weight: 600; }
 .tu-arrow { position: absolute; top: 50%; z-index: 2; margin-top: -16px; width: 32px; height: 32px; border-radius: 50%; display: grid !important; place-items: center; background: rgba(60, 60, 67, 0.6) !important; color: var(--t1) !important; opacity: 0; transition: opacity 0.15s; }
@@ -567,6 +569,9 @@ input[type='range'] { accent-color: var(--amber); width: 100%; }
 .tu-layers-bar { display: flex; align-items: center; gap: 4px; }
 .tu-layers-bar .tu-mini-seg { background: rgba(44, 44, 46, 0.92); }
 .tu-layers-bar .tu-icon-btn { background: rgba(44, 44, 46, 0.92) !important; }
+/* video or photograph, on the mirror: the same small segmented control as the side view's layers */
+.tu-mirror-mode { position: absolute; top: 8px; right: 8px; z-index: 3; }
+.tu-mirror-mode .tu-mini-seg { background: rgba(44, 44, 46, 0.92); }
 .tu-layers-panel { width: 236px; display: flex; flex-direction: column; padding: 6px; border-radius: 10px; background: #2c2c2e; box-shadow: 0 0 0 1px #3a3a3c, 0 12px 32px rgba(0, 0, 0, 0.6); }
 .tu-layers-panel label { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px 10px; border-bottom: 1px solid #3a3a3c; margin-bottom: 4px; }
 .tu-layers-panel label span { display: flex; align-items: center; gap: 7px; font-size: 12.5px; }

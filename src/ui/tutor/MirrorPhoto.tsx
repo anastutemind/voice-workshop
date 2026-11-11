@@ -19,6 +19,11 @@
  * another), and the photographs are handed to the card while nothing else
  * is happening, nearest ones first. Without a graphics card, or without the
  * photographs, the three-dimensional face takes its place (Mirror3D.tsx).
+ *
+ * A recording that has a clip (public/mirror/clips) is shown as that clip instead: a <video> of the same man saying
+ * it, laid over the photographs, fading in as the sound starts and out as it ends, and kept with the sound by
+ * mirrorVideo.ts. Everything else (typed text, the model's voice, slow motion, a recording without a clip, a clip that
+ * cannot be played, or the choice of the photographs) shows the photographs as before.
  */
 import { useEffect, useRef, useState } from 'react';
 import type { Face } from './faces';
@@ -27,6 +32,8 @@ import { lipsOf, LipState } from './readout';
 import { morphShape, mouthFeatures, MouthFeatures, photoWeights } from './visemes';
 import type { Articulators } from '../../dsp/tract/types';
 import type { TractGeometry } from '../../dsp/tract/geometry';
+import { clipOf, Cue } from './mirrorClip';
+import { useClipList, useMirrorMode, VideoFollower } from './mirrorVideo';
 
 const LIP_WORD: Record<LipState, string> = { closed: 'closed', teeth: 'on the top teeth', round: 'rounded', spread: 'spread', open: 'open' };
 
@@ -237,11 +244,16 @@ export class MirrorMorph {
   }
 }
 
-export function MirrorPhoto({ face, label, onFail }: { face: () => Face | null; label: string; onFail: () => void }) {
+export function MirrorPhoto({ face, cue, label, onFail }: { face: () => Face | null; cue: () => Cue | null; label: string; onFail: () => void }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
+  const clip = useRef<HTMLVideoElement | null>(null);
   const word = useRef<HTMLSpanElement | null>(null);
   const getFace = useRef(face);
   getFace.current = face;
+  // what the video is told at every frame, without drawing the page again
+  const list = useClipList(), mode = useMirrorMode();
+  const video = useRef({ cue, list, mode });
+  video.current = { cue, list, mode };
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -252,11 +264,32 @@ export function MirrorPhoto({ face, label, onFail }: { face: () => Face | null; 
     let dead = false, raf = 0;
     let drawn: { face: Face | null; w: number; h: number } = { face: null, w: 0, h: 0 };
     let frames = 0;
+    const el = clip.current;
+    if (el) el.muted = true;
+    const follower = el ? new VideoFollower(el) : null;
+    let opacity = 0, timer = 0;
+    if (import.meta.env.DEV) Object.assign(window, { tutorMirrorVideo: follower });
+    /**
+     * The video of the recording (if it has one) is told what the sound does, and says how much of it shows. Done at
+     * every frame of the page, and, while a recording plays, between its frames too (a timer): a page that draws few
+     * frames still starts the video, and puts it right, when the sound is due, not at the next frame.
+     */
+    const lookAtVideo = (): void => {
+      if (!follower || !el) return;
+      const v = video.current, c = v.cue();
+      follower.update(c, clipOf(v.list, c?.id), v.mode === 'video', performance.now());
+      if (follower.shown !== opacity) { opacity = follower.shown; el.style.opacity = String(opacity); }
+      if (c?.playing && !timer) timer = window.setInterval(lookAtVideo, 30);
+      else if (!c?.playing && timer) { window.clearInterval(timer); timer = 0; }
+    };
     void morph.load().then(() => { if (!dead) { setReady(true); raf = requestAnimationFrame(frame); } }, () => { if (!dead) onFail(); });
     if (import.meta.env.DEV) Object.assign(window, { tutorMirror: morph });
     const frame = () => {
       raf = requestAnimationFrame(frame);
       if (morph.lost) { dead = true; cancelAnimationFrame(raf); onFail(); return; }
+      // the video of the recording (if it has one), over the photographs by as much as it shows
+      lookAtVideo();
+      const covered = !!follower && follower.opacity >= 0.999;
       const f = getFace.current();
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
@@ -272,14 +305,17 @@ export function MirrorPhoto({ face, label, onFail }: { face: () => Face | null; 
       if (still) return;
       const st = lipsOf(f.pose.art, geom).state;
       if (word.current && word.current.textContent !== LIP_WORD[st]) word.current.textContent = LIP_WORD[st];
+      // (what the video covers is not painted: the photographs are drawn again from the first frame it lets them show)
+      if (covered) { drawn = { face: null, w: 0, h: 0 }; return; }
       if (morph.draw(f.pose.art, geom, w, h)) drawn = { face: f, w, h };
     };
-    return () => { dead = true; cancelAnimationFrame(raf); };
+    return () => { dead = true; cancelAnimationFrame(raf); window.clearInterval(timer); follower?.dispose(); };
   }, []);
 
   return (
     <div className={ready ? 'mirror3d ready' : 'mirror3d'} role="img" aria-label={label}>
       <canvas ref={canvas} />
+      <video ref={clip} className="mirror3d-video" muted playsInline preload="auto" tabIndex={-1} aria-hidden="true" disablePictureInPicture />
       <p className="mirror3d-state">Lips <span ref={word} /></p>
     </div>
   );

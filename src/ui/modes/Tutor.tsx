@@ -10,6 +10,7 @@ import { Clip, Outcome, player, Sound, usePlayer, usePlayerTime, What } from '..
 import { FaceCanvas, Layers, setLayers, shapeOf, useLayers } from '../tutor/faces';
 import { Mirror3D } from '../tutor/Mirror3D';
 import { MirrorPhoto } from '../tutor/MirrorPhoto';
+import { MirrorMode, setMirrorMode, useClipList, useMirrorMode } from '../tutor/mirrorVideo';
 import { hush, narratorVoice, onVoices, sayText, speechText, voiceFor, voiceOf } from '../tutor/speech';
 import { playClip, recordingId, voiceClip } from '../tutor/clips';
 import { recorder, useRecorder } from '../tutor/recorder';
@@ -66,6 +67,22 @@ function NowWords({ title, names }: { title: string; names: string[] }) {
       <div className={words.voiceOn ? 'voice' : ''}><dt>{names[3]}</dt><dd>{words.voice}</dd></div>
       <div><dt>{names[4]}</dt><dd>{words.air}</dd></div>
     </dl>
+  );
+}
+
+/** The mirror's picture: the video of the man saying it, or the morphed photographs (shown only once there are videos to choose). */
+function MirrorPicture() {
+  const L = useL();
+  const list = useClipList();
+  const mode = useMirrorMode();
+  if (!list || !Object.keys(list).length) return null;
+  const choices: [MirrorMode, string][] = [['video', L({ it: 'Video', en: 'Video' })], ['photo', L({ it: 'Foto', en: 'Photo' })]];
+  return (
+    <div className="tu-mirror-mode" role="group" aria-label={L({ it: 'Immagine dello specchio', en: 'Mirror picture' })}>
+      <div className="tu-mini-seg">
+        {choices.map(([id, name]) => <button key={id} className={mode === id ? 'on' : ''} aria-pressed={mode === id} onClick={() => setMirrorMode(id)}>{name}</button>)}
+      </div>
+    </div>
   );
 }
 
@@ -557,9 +574,10 @@ export function Tutor() {
             {flat
               ? <FaceCanvas kind="front" face={player.face} label={L({ it: 'La bocca allo specchio', en: 'The mouth in the mirror' })} />
               : photo
-                ? <MirrorPhoto face={player.face} label={L({ it: 'La bocca allo specchio', en: 'The mouth in the mirror' })} onFail={() => setPhoto(false)} />
+                ? <MirrorPhoto face={player.face} cue={player.cue} label={L({ it: 'La bocca allo specchio', en: 'The mouth in the mirror' })} onFail={() => setPhoto(false)} />
                 : <Mirror3D face={player.face} label={L({ it: 'La bocca allo specchio', en: 'The mouth in the mirror' })} onFail={() => setFlat(true)} />}
             <figcaption className="tu-hud">{L({ it: 'Specchio', en: 'Mirror' })}</figcaption>
+            {!flat && photo && <MirrorPicture />}
           </figure>
           <button className="tu-arrow" aria-label={L({ it: 'Lettera dopo', en: 'Next letter' })} onClick={() => go(idx + 1)}><Icon.IconChevronRight /></button>
         </div>
