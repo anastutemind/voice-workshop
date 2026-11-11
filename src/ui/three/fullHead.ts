@@ -629,7 +629,8 @@ export function buildHead(scan: Scan, outline: ReturnType<typeof paintingOutline
         const a = at(j, k), b = at(j + 1, k), c = at(j, k + 1), d = at(j + 1, k + 1);
         index.push(a, c, b, b, c, d);
       }
-      index.push(cap + j, end, cap + j + 1);
+      // (the cut end faces down, away from the neck: seen from below it is the end of the neck, not its hollow)
+      index.push(cap + j, cap + j + 1, end);
     }
   }
   // (the triangles of the neck face outward as the scan's do: turned over if they do not)
@@ -771,7 +772,8 @@ export function placeTeeth(teeth: Teeth, bite: Float32Array, sc: HeadScene, out:
   const { canon, lower } = teeth, n = lower.length, s = sc.s;
   for (let v = 0; v < n; v++) {
     const q = lower[v] ? sc.place(bite[2 * v], bite[2 * v + 1], 1) : sc.place(canon[3 * v], canon[3 * v + 1], 0);
-    out[3 * v] = q[0]; out[3 * v + 1] = q[1]; out[3 * v + 2] = canon[3 * v + 2] * s;
+    // (a little back from where the scan has them: shut, the lips cover the edges of the teeth)
+    out[3 * v] = q[0] - 0.14 * s; out[3 * v + 1] = q[1]; out[3 * v + 2] = canon[3 * v + 2] * s;
   }
 }
 
@@ -816,8 +818,14 @@ export function placeHead(head: Head, sc: HeadScene, out: Float32Array, move?: L
   }
 }
 
-/** Which way the skin faces at every point, for the places the points have now: smooth across the edges where the scan's pieces meet. */
-export function shadeHead(head: Head, at: Float32Array, normal: Float32Array): void {
+const adjacency = new WeakMap<Head, Int32Array[]>();
+
+/**
+ * Which way the skin faces at every point, for the places the points have now: smooth across the edges where the
+ * scan's pieces meet. `soft` (0..1 per point) is where it is smoothed further, over the neighbours: along the seam
+ * where the grown neck meets the jaw, which would otherwise show as a crease.
+ */
+export function shadeHead(head: Head, at: Float32Array, normal: Float32Array, soft?: Float32Array): void {
   const { index, same, count } = head;
   normal.fill(0);
   for (let t = 0; t < index.length; t += 3) {
@@ -826,6 +834,32 @@ export function shadeHead(head: Head, at: Float32Array, normal: Float32Array): v
     const vx = at[3 * c] - at[3 * a], vy = at[3 * c + 1] - at[3 * a + 1], vz = at[3 * c + 2] - at[3 * a + 2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     for (const q of [same[a], same[b], same[c]]) { normal[3 * q] += nx; normal[3 * q + 1] += ny; normal[3 * q + 2] += nz; }
+  }
+  if (soft) {
+    let nb = adjacency.get(head);
+    if (!nb) {
+      const sets: Set<number>[] = Array.from({ length: count }, () => new Set());
+      for (let t = 0; t < index.length; t += 3) for (let k = 0; k < 3; k++) { const a = same[index[t + k]], b = same[index[t + (k + 1) % 3]]; if (a !== b) { sets[a].add(b); sets[b].add(a); } }
+      nb = sets.map((x) => Int32Array.from(x));
+      adjacency.set(head, nb);
+    }
+    const tmp = new Float32Array(normal.length);
+    for (let pass = 0; pass < 3; pass++) {
+      for (let i = 0; i < count; i++) {
+        const w = soft[i];
+        if (same[i] !== i) continue;
+        const l = Math.hypot(normal[3 * i], normal[3 * i + 1], normal[3 * i + 2]) || 1;
+        let sx = normal[3 * i] / l, sy = normal[3 * i + 1] / l, sz = normal[3 * i + 2] / l;
+        if (w > 0.01 && nb[i].length) {
+          let mx = 0, my = 0, mz = 0;
+          for (const j of nb[i]) { const lj = Math.hypot(normal[3 * j], normal[3 * j + 1], normal[3 * j + 2]) || 1; mx += normal[3 * j] / lj; my += normal[3 * j + 1] / lj; mz += normal[3 * j + 2] / lj; }
+          const k = nb[i].length, a = Math.min(0.9, 0.9 * w);
+          sx = sx * (1 - a) + (mx / k) * a; sy = sy * (1 - a) + (my / k) * a; sz = sz * (1 - a) + (mz / k) * a;
+        }
+        tmp[3 * i] = sx; tmp[3 * i + 1] = sy; tmp[3 * i + 2] = sz;
+      }
+      for (let i = 0; i < count; i++) if (same[i] === i) { normal[3 * i] = tmp[3 * i]; normal[3 * i + 1] = tmp[3 * i + 1]; normal[3 * i + 2] = tmp[3 * i + 2]; }
+    }
   }
   for (let i = 0; i < count; i++) {
     const r = same[i];

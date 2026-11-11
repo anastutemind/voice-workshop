@@ -3,6 +3,8 @@ import { computeGeometry } from '../src/dsp/tract/geometry';
 import { DEFAULT_ANATOMY, DEFAULT_ARTICULATORS, DEFAULT_TEETH } from '../src/dsp/tract/types';
 import { PHONEMES } from '../src/dsp/speech/phonemes';
 import { buildTractMeshes, wallsAt, airHalfWidth, Walls, RING_SIDE } from '../src/ui/three/meshes';
+import { teethShape } from '../src/ui/three/mouth';
+import { seamWeights } from '../src/ui/three/skin';
 import { note } from './helpers';
 
 const geometryOf = (ph: string, piriform = 1) =>
@@ -80,5 +82,36 @@ describe('the 3D view of the tract', () => {
     expect(empty.air).toBeCloseTo(empty.length, 6);
     expect(half.air).toBeCloseTo(0.5 * half.length, 6);
     expect(empty.rOpen).toBeGreaterThan(empty.rBottom);
+  });
+});
+
+describe('the 3D head: what its shading reads off the mesh', () => {
+  it('gives each crown of the teeth a round normal and a dark side where the next crown meets it', () => {
+    // two crowns, each a small tetrahedron-like piece (4 points), side by side along the arch (z)
+    const canon = new Float32Array([
+      // crown A: z from -1 to 0
+      6, 9, -1,  6.4, 9, -0.5,  6, 9.5, -0.5,  6, 8.5, 0,
+      // crown B: z from 0.4 to 1.4
+      6, 9, 0.4,  6.4, 9, 0.9,  6, 9.5, 0.9,  6, 8.5, 1.4,
+    ]);
+    const index = Uint32Array.from([0, 1, 2, 0, 2, 3, 1, 2, 3, 4, 5, 6, 4, 6, 7, 5, 6, 7]);
+    const { gap, blob } = teethShape(canon, index, 8);
+    expect(gap.length).toBe(8);
+    expect(Array.from(gap).every((g) => g >= 0 && g <= 1)).toBe(true);
+    for (let i = 0; i < 8; i++) expect(Math.hypot(blob[3 * i], blob[3 * i + 1], blob[3 * i + 2])).toBeCloseTo(1, 4);
+    // (the point of a crown farthest along the arch lies at its side)
+    expect(Math.max(...Array.from(gap))).toBeGreaterThan(0.5);
+  });
+
+  it('weights the points near the seam of the grown neck 1 on it and 0 away from it', () => {
+    // a strip of 7 points in a row (a chain of triangles); the last one is a copy, in the neck, of the first
+    const n0 = 6, count = 7;
+    const same = Int32Array.from([0, 1, 2, 3, 4, 5, 0]);
+    const index = Uint32Array.from([0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4, 5, 6, 5, 4]);
+    const w = seamWeights(index, same, count, n0);
+    expect(w[0]).toBe(1);
+    expect(w[6]).toBe(1);
+    expect(w[1]).toBeGreaterThan(w[3]);
+    expect(w[3]).toBeLessThan(1);
   });
 });
